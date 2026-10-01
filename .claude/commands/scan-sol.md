@@ -4,7 +4,7 @@ Scan Solana and Anchor (Rust) programs for security vulnerabilities. Works on si
 
 ## Scope
 
-Target: `$ARGUMENTS` (defaults to current working directory if empty). Scan all `.rs` files under the target, **always excluding** `target/` directories. By default also exclude `tests/`, `test/`, and `benches/` directories; if the user appends `with-tests` to the arguments, include them.
+Target: `$ARGUMENTS` (defaults to current working directory if empty). Scan all `.rs` files under the target, **always excluding** `target/` directories. By default also exclude `tests/`, `test/`, and `benches/` directories; if the user appends `with-tests`, include them. If the user appends `include-sdk`, also bundle `.ts` and `.js` source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`). Use `include-sdk` for Solana codebases where SDK, client, or pricing-adapter code carries security-relevant math alongside the on-chain program.
 
 ## Workflow
 
@@ -33,7 +33,7 @@ Before doing anything else, print this banner exactly as shown:
 
 ### Step 1 - Prepare
 
-1. Glob for all in-scope `.rs` files.
+1. Glob for all in-scope `.rs` files (plus `.ts`/`.js` when `include-sdk` was passed).
 2. Count total lines across all files. If zero, stop and tell the user no Rust source files were found.
 3. Concatenate all in-scope `.rs` files into `/tmp/sol-scan-bundle.rs` using bash, with `// === FILE: <path> ===` separators between each file. Record the total line count.
 4. Note the project shape for the agents: presence of `Anchor.toml`, `#[program]` macros, and `declare_id!` calls indicate Anchor; raw `entrypoint!` / `process_instruction` indicates native. Both can coexist.

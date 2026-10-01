@@ -144,6 +144,7 @@ Then ask Copilot: *"Scan for Solana vulnerabilities"* or *"Run Solana audit"*
 /scan-sol ./programs/my-program          # scan specific directory
 /scan-sol /path/to/workspace             # scan absolute path
 /scan-sol ./programs/my-program with-tests   # include tests/, test/, benches/
+/scan-sol ./my-repo include-sdk          # also scan .ts/.js SDK and adapter code
 ```
 
 ### Cursor / Windsurf / Copilot (natural language)
@@ -167,7 +168,7 @@ Claude Code gets the best results because it runs two agents with different anal
 
 ### What happens when you run it
 
-1. **Prepare** - Finds all `.rs` files (always excludes `target/`; excludes `tests/`, `test/`, `benches/` unless you pass `with-tests`), concatenates them into a temporary bundle with file separators, and detects Anchor vs native shape.
+1. **Prepare** - Finds all `.rs` files (always excludes `target/`; excludes `tests/`, `test/`, `benches/` unless you pass `with-tests`), concatenates them into a temporary bundle with file separators, and detects Anchor vs native shape. Pass `include-sdk` to also bundle `.ts`/`.js` SDK and adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
 2. **Double pass** - Launches both agents in parallel:
    - Vector Scan agent reads the bundle, triages all 21 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
    - Adversarial Reasoning agent reads all files, maps the instruction/account/CPI surface, and reasons adversarially about every handler.

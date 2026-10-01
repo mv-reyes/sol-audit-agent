@@ -19,7 +19,7 @@
  ◈ 21 vectors ∙ 5 classes
 ```
 
-When the user asks to scan for Solana vulnerabilities or run a Solana audit, follow this workflow against all `.rs` files in the project (always excluding `target/`; exclude `tests/`, `test/`, and `benches/` unless the user asks for them).
+When the user asks to scan for Solana vulnerabilities or run a Solana audit, follow this workflow against all `.rs` files in the project (always excluding `target/`; exclude `tests/`, `test/`, and `benches/` unless the user asks for them). Append `include-sdk` to also scan `.ts`/`.js` SDK, client, and pricing-adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
 
 ## Workflow
 
