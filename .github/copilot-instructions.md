@@ -16,7 +16,7 @@
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
 
  ◈ Single-pass audit engine for Solana and Anchor programs
- ◈ 21 vectors ∙ 5 classes
+ ◈ 22 vectors ∙ 5 classes
 ```
 
 When the user asks to scan for Solana vulnerabilities or run a Solana audit, follow this workflow against all `.rs` files in the project (always excluding `target/`; exclude `tests/`, `test/`, and `benches/` unless the user asks for them). Append `include-sdk` to also scan `.ts`/`.js` SDK, client, and pricing-adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
@@ -27,7 +27,7 @@ When the user asks to scan for Solana vulnerabilities or run a Solana audit, fol
 Read all in-scope `.rs` files. Prioritize program entry points and instruction handlers first (`lib.rs`, `instructions/`, `processor/`), then state definitions, then helpers and math libraries.
 
 ### Step 2 - Triage
-For each of the 21 vectors below (VS1-VS21), classify as Skip / Borderline / Survive:
+For each of the 22 vectors below (VS1-VS22), classify as Skip / Borderline / Survive:
 - **Skip**: the construct AND underlying concept are both absent.
 - **Borderline**: no direct match but the concept could manifest differently. 1-sentence relevance check - name the specific handler AND describe the exploit. Promote only if both are concrete, otherwise drop.
 - **Survive**: the construct or pattern is clearly present.
@@ -112,6 +112,9 @@ Summary header (files scanned, lines analyzed, finding count by severity), then 
 **VS20 - SIGNER-PAYER-CONFUSION** (High): Grep: payer: Signer | pub payer | has_one = authority. Fee payer used as authorization identity in relayed or sponsored flows; payer stands in for owner. CONFIRM IF: a third party can sponsor or relay to satisfy the check without the resource owner's key.
 
 **VS21 - SYSVAR-SUBSTITUTION** (Medium): Grep: sysvar | from_account_info | load_instruction_at | next_account_info. Sysvar or instructions account read without an id check; forged rent/clock/instruction data defeats checks. CONFIRM IF: unvalidated sysvar read on a decision path. Wormhole ($326M) is the canonical incident.
+
+
+**VS22 - SILENTLY-DROPPED-PARAMETER** (Medium to High): A public parameter is accepted but silently dropped or shadowed: two fields carry one concept and only one is read, an Option is defaulted where the instruction supports a value, a caller hint is ignored. The tx builds fine but targets accounts or amounts the caller never chose. Grep: unwrap_or_else | unwrap_or( | #[builder(default | .or(self. CONFIRM IF: the ignored value changes the account, address, destination, or amount used, with concrete harm (fees routed wrong, instructions referencing unchosen accounts, documented feature inoperative). Anchor: gmx-solana PR #447 (dropped params.nonce; hardcoded None escrow for builder fees).
 
 ## FP Gate (3 Checks)
 

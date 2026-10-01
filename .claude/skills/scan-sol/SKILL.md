@@ -1,6 +1,6 @@
 ---
 name: scan-sol
-description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 21 vectors (VS1-VS21) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis. Scope is auto-detected; findings reported by severity and confidence.
+description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 22 vectors (VS1-VS22) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis. Scope is auto-detected; findings reported by severity and confidence.
 ---
 
 # Solana Vulnerability Scanner
@@ -33,7 +33,7 @@ Before doing anything else, print this banner exactly as shown:
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
 
  ◈ Double-pass audit engine for Solana and Anchor programs
- ◈ 21 vectors ∙ 5 classes ∙ parallel analysis
+ ◈ 22 vectors ∙ 5 classes ∙ parallel analysis
 ```
 
 ### Step 1 - Prepare
@@ -134,7 +134,7 @@ CRITICAL OUTPUT RULE: Return findings ONLY in your final text response. Do NOT w
 WORKFLOW:
 1. Read the bundle file at {BUNDLE_PATH} in parallel 1000-line chunks on your first turn. Total lines: {LINE_COUNT}. Compute offsets and issue all Read calls at once. These are your ONLY file reads.
 
-2. TRIAGE PASS. For each vector (VS1-VS21), classify into Skip / Borderline / Survive:
+2. TRIAGE PASS. For each vector (VS1-VS22), classify into Skip / Borderline / Survive:
    - Skip: the construct AND underlying concept are both absent from this codebase.
    - Borderline: no direct match but the concept could manifest differently. 1-sentence check: name the specific handler where it manifests AND describe the exploit. Promote only if both are concrete, otherwise drop.
    - Survive: the construct or pattern is clearly present.

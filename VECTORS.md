@@ -1,6 +1,6 @@
-# Solana Vulnerability Vectors (VS1-VS21)
+# Solana Vulnerability Vectors (VS1-VS22)
 
-21 vectors for Solana and Anchor (Rust) programs. Grouped in five classes:
+22 vectors for Solana and Anchor (Rust) programs. Grouped in five classes:
 
 - **A. Account model (VS1-VS8)**: the Solana-specific core. Most real Solana exploits live here.
 - **B. Arithmetic (VS9-VS11)**: token math, truncation, rounding.
@@ -15,7 +15,8 @@ Triage discipline: a grep hit scopes the search; it is never evidence. Evidence 
 Merge/split decisions vs. the raw coverage list:
 - Oracle staleness and oracle account substitution are merged into VS12: same grep surface, same confirmation site (oracle account validation plus clock comparison), two confirm modes.
 - Divide-before-multiply (VS10) is split from rounding direction (VS11): different root cause, different fix, different incident anchors.
-- All other requested items map one-to-one.
+- All other requested items map one-to-one. VS22 was added during validation: a recall run against
+  gmx-solana missed the builder-fee nonce/escrow bug class until this vector existed.
 
 ---
 
@@ -587,10 +588,15 @@ Inventory:
   can set that field.
 - Check for one field used in two roles (referrer and builder, payer and beneficiary) and
   for self-dealing bindings (payer == fee recipient).
+- Check for fee destination or escrow fields hardcoded to a constant or None where the
+  instruction and feature set support a real value: the intended recipient silently never
+  receives.
 
-Report only if ALL true:
-- A fee destination resolves to an unintended or attacker-chosen party.
-- Value actually moves; not accounting cosmetics.
+Report only if ALL true (either mode):
+- Routing: a fee destination resolves to an unintended or attacker-chosen party, and value
+  actually moves.
+- Hardcoded: a fee destination or escrow is hardcoded or defaulted so the intended
+  recipient can never receive, and the fee feature is reachable.
 
 Do not report if:
 - Destinations are bound by constraint or PDA, and role fields are distinct.
@@ -721,6 +727,46 @@ fake-sysvar family enabled forged guardian approvals.
 
 ---
 
+VS22 - SILENTLY-DROPPED-PARAMETER
+Severity: Medium to High
+Grep: unwrap_or_else | unwrap_or( | #[builder(default | Option< | .or(self | generate_
+
+Description:
+A public parameter or field is accepted but silently dropped in favor of another source of
+truth or a hardcoded default: two fields carry one concept and only one is read, an Option
+is defaulted where the downstream instruction supports a value, or a caller-supplied hint is
+ignored. The transaction builds fine but targets accounts or amounts the caller never chose.
+The SDK/builder twin of VS17: on-chain it is an instruction arg that is read but unused.
+
+Applicability gate:
+Builders, handlers, or instruction constructors with overlapping or optional fields,
+especially where a derived address, destination, or amount depends on the value.
+
+Inventory:
+- Diff the public input surface (params struct fields, builder setters, instruction args)
+  against what the construction logic actually reads.
+- Flag any settable field that is never read, or shadowed by another field or a hardcoded
+  default, when it feeds an address derivation, destination, or amount.
+- For each flagged field, trace what the caller reasonably expects versus what the
+  instruction actually uses.
+
+Report only if ALL true:
+- A caller-settable input is silently ignored or overridden.
+- The ignored value changes which account, address, destination, or amount is used.
+- Concrete harm: funds or fees routed to an unintended account, instructions referencing
+  accounts the caller did not choose, or a documented feature silently inoperative.
+
+Do not report if:
+- The field is read on every path where it is settable, or precedence between overlapping
+  fields is explicit in code and both can reach the instruction.
+
+Anchor: gmsol-labs/gmx-solana PR #447 (2026). CreateOrderParams.nonce was silently dropped
+in favor of a random nonce; orders landed at addresses callers never chose, breaking
+set_builder_fee instructions built against them. Same PR: increase orders hardcoded the
+final-output-token escrow to None, leaving builder fees with no settlement path.
+
+---
+
 ## Cross-reference: required coverage
 
 | Required item | Vector |
@@ -747,3 +793,4 @@ fake-sysvar family enabled forged guardian approvals.
 | vault share-price inflation | VS19 |
 | signer-vs-payer confusion | VS20 |
 | sysvar substitution | VS21 |
+| (added in validation) silently dropped parameter | VS22 |

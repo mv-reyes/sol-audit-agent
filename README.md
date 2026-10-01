@@ -26,7 +26,7 @@ Runs two parallel analysis agents against your Rust codebase:
 
 | Agent | Strategy | What it catches |
 |-------|----------|-----------------|
-| **Vector Scan** | Systematic triage of 21 Solana vulnerability patterns | Known footguns - fast, cheap, high recall |
+| **Vector Scan** | Systematic triage of 22 Solana vulnerability patterns | Known footguns - fast, cheap, high recall |
 | **Adversarial Reasoning** | Free-form adversarial bug hunting | Novel bugs, logic errors, economic exploits the vector list doesn't cover |
 
 Results are deduplicated, scored by confidence, and presented as a single report.
@@ -80,6 +80,7 @@ The vector taxonomy is seeded from real 2026 findings in public Solana repos: a 
 | VS19 | Vault share-price inflation | High |
 | VS20 | Signer-vs-payer confusion | High |
 | VS21 | Sysvar substitution | Medium |
+| VS22 | Silently dropped parameter | Medium to High |
 
 Full definitions with grep signatures and confirm-if criteria: [VECTORS.md](VECTORS.md).
 
@@ -170,18 +171,56 @@ Claude Code gets the best results because it runs two agents with different anal
 
 1. **Prepare** - Finds all `.rs` files (always excludes `target/`; excludes `tests/`, `test/`, `benches/` unless you pass `with-tests`), concatenates them into a temporary bundle with file separators, and detects Anchor vs native shape. Pass `include-sdk` to also bundle `.ts`/`.js` SDK and adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
 2. **Double pass** - Launches both agents in parallel:
-   - Vector Scan agent reads the bundle, triages all 21 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
+   - Vector Scan agent reads the bundle, triages all 22 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
    - Adversarial Reasoning agent reads all files, maps the instruction/account/CPI surface, and reasons adversarially about every handler.
 3. **Merge** - Deduplicates findings, re-numbers, sorts by confidence, presents the report.
 
 ### Example output
 
-Populated from real validation runs - see [validation/](validation/) for the full reports (target repos, pinned commits, raw output, findings tables, false-positive counts).
+Verbatim from validation run 1 ([Loopscale pricing adapters @ `96dcc95`](validation/loopscale-96dcc95.md), pre-fix commit; full run in [validation/](validation/)):
+
+```
+📋 Solana Scan Report
+Files scanned: 14
+Lines analyzed: 1,487
+Findings: 4 (1 High, 2 Medium, 1 Low)
+
+🟠 **1. Meteora LP pricing floored to whole dollars by integer divide-before-multiply**
+src/pricing/meteora.ts:79-80 · Confidence: 90
+
+**Description:** getMeteoraTokenBalancesBn() computes a per-LP exchange-rate scalar with
+integer division (tokenAOutAmount / 1_000_000) before multiplying by the user's balance,
+discarding all sub-unit precision of the quote and zeroing it entirely when one LP unit
+is worth less than 1 USDC base-unit multiple.
+
+**Attack path:**
+1. A request to /v1/decompile_mints includes the Meteora LP mint with any balance.
+2. amm.getWithdrawQuote(1_000_000, 0, USDC) returns tokenAOutAmount for 1e6 LP base units.
+3. scalar = 1_990_000n / 1_000_000n = 1n - the LP is priced at $1.00 instead of $1.99;
+   if one LP is worth < $1, scalar = 0n and the entire position prices to zero.
+4. The mispriced total is returned with HTTP 200, so consumers persist a silently wrong
+   collateral valuation.
+
+**Fix:**
+\`\`\`diff
+- const scalar = BigInt(quote.tokenAOutAmount.toString()) / quoteInput;
+- const scaledOutAmount = switchBaseDecimalsBn(balance * scalar, poolDecimals, outMintDecimals);
++ const scaledOutAmount = switchBaseDecimalsBn(
++     (balance * BigInt(quote.tokenAOutAmount.toString())) / quoteInput,
++     poolDecimals,
++     outMintDecimals
++ );
+\`\`\`
+
+...
+```
+
+This is the bug Loopscale fixed upstream in PR #3 ("don't floor the meteora redemption rate"). The scanner rediscovered it cold at the pre-fix commit and produced the same fix that was adopted: multiply-first, divide-last.
 
 ## How it stays token-efficient
 
 - **Bundle read**: All source is concatenated into one file - agents read it in parallel chunks on turn 1, no repeated file I/O.
-- **Fast triage**: 21 vectors are classified in a single pass using grep signatures verified against real Solana program source. Irrelevant vectors are dropped in 1 structured line each.
+- **Fast triage**: 22 vectors are classified in a single pass using grep signatures verified against real Solana program source. Irrelevant vectors are dropped in 1 structured line each.
 - **FP gate**: Every potential finding must pass 3 checks (concrete path, reachable, impactful) before expansion. Kills false positives before they waste tokens.
 - **Hard stop**: Agents do not revisit eliminated vectors or re-scan.
 
