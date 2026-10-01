@@ -89,3 +89,22 @@ bump/CPI/fee-destination enforcement all present and verified). Two confirms:
    Recorded as an unverified candidate, not a confirmed finding.
 
 False positives in the re-run: 0 confirmed FPs (one unverified candidate disclosed as such).
+
+## Refutation pass (2026-10-01, red-team stage validation)
+
+Red Team agent on the two confirmed findings plus the unverified VS9 candidate.
+Result: 2 CONFIRMED (findings 1-2 as reported), and the VS9 candidate upgraded from
+"unverified" to CONFIRMED with a scope correction.
+
+- Zero lot/tick init params: CONFIRMED on all three gates. Notably, num_base_lots_per_base_unit
+  = 0 IS rejected (mod-by-zero), matching the finding's exact two variants. IOC buys skip
+  the balance pre-check that would divide by zero, completing the drain path. Init is
+  permissionless; the creator self-authorizes PostOnly -> Active.
+- Toxic-ask overflow (former unverified candidate): CONFIRMED. The agent traced what the
+  orchestrator had not: no max-price guard on ask placement (floor at Ticks::ONE only),
+  plain `self.inner * other.inner` Mul impls (panic with overflow-checks = true), unpriced
+  IOC buys default to limit Ticks::MAX, and the overflowing multiply executes before the
+  budget checks. Scope correction applied: only unpriced/deep sweeps through the toxic
+  level are bricked; priced limit orders below it trade normally. Medium severity fair.
+
+False positives after refutation across all runs: 0.

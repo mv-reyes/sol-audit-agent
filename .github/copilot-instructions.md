@@ -57,8 +57,14 @@ Ask of every handler: What if this account is fake, substituted, or duplicated? 
 - Zero or extreme numeric init parameters: divisibility checks pass at zero; the market comes up broken and drains whoever trades on it.
 - First-deposit vault with no minimum liquidity: the trap waits for a victim, not an attacker.
 
-### Step 5 - Report
-Summary header (files scanned, lines analyzed, finding count by severity), then findings sorted by confidence descending. If nothing survived: "No findings - the scanned code passed all Solana vector checks and adversarial analysis."
+### Step 5 - Red Team (refutation)
+Attack every surviving finding before reporting it. For each, re-read the cited region and try to kill it on exactly one FP-gate check: show a step in the attack path that is impossible, name the specific guard that stops it, or show nobody loses value. Verdicts:
+- **CONFIRMED**: you tried to kill it and failed. Mark `Red-teamed: confirmed` with what you tried.
+- **WEAKENED**: part of the claim fails. Re-severity and note the reason.
+- **KILLED**: move to a "Rejected by red team" appendix with the exact guard or logic (file:line) that defeats it. Never drop silently.
+
+### Step 6 - Report
+Summary header (files scanned, lines analyzed, finding count by severity, red team: N confirmed / N weakened / N killed), then findings sorted by confidence descending, then the rejected-by-red-team appendix. If every candidate was killed: "No confirmed findings - all candidates were rejected by the red team (see appendix)." If there were no candidates: "No findings - the scanned code passed all Solana vector checks and adversarial analysis."
 
 ## Vectors
 

@@ -1,6 +1,6 @@
 ---
 name: scan-sol
-description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 24 vectors (VS1-VS24) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis. Scope is auto-detected; findings reported by severity and confidence.
+description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 24 vectors (VS1-VS24) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis, then red-teams every finding. Scope is auto-detected; findings reported by severity and confidence.
 ---
 
 # Solana Vulnerability Scanner
@@ -33,7 +33,7 @@ Before doing anything else, print this banner exactly as shown:
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
 
  ◈ Double-pass audit engine for Solana and Anchor programs
- ◈ 24 vectors ∙ 5 classes ∙ parallel analysis
+ ◈ 24 vectors ∙ 5 classes ∙ parallel analysis ∙ red-teamed findings
 ```
 
 ### Step 1 - Prepare
@@ -68,17 +68,35 @@ Prompt the agent with the Adversarial Reasoning Agent Prompt below. Interpolate:
 
 ---
 
-### Step 3 - Merge & Report
+### Step 3 - Merge
 
 1. Collect findings from both agents.
 2. Deduplicate: if both agents found the same issue (same affected handler + same root cause), keep the higher-confidence version.
 3. Re-number findings sequentially.
 4. Sort by confidence descending.
-5. Present the final report to the user with a summary header:
+
+### Step 4 - Refutation Pass (red team)
+
+If the merge produced zero findings, skip to Step 5. Otherwise launch one Red Team agent using a Task tool call (`subagent_type: "general-purpose"`, `model: "sonnet"`). Prompt it with the Refutation Agent Prompt below. Interpolate:
+- `{FINDINGS}` -> the numbered, merged findings from Step 3 (full text of each)
+- `{BUNDLE_PATH}` -> `/tmp/sol-scan-bundle.rs`
+- `{FP_GATE}` -> the "FP Gate" section below
+
+Every finding is attacked before it is reported. Verdicts: CONFIRMED, WEAKENED, or KILLED.
+
+### Step 5 - Report
+
+1. Apply the verdicts:
+   - CONFIRMED findings keep their position and gain a `Red-teamed: confirmed` line naming what the red team tried.
+   - WEAKENED findings are re-severitied and re-confidenced as the red team directs, with a `Red-teamed: weakened` line giving the reason.
+   - KILLED findings move to the appendix.
+2. Present the final report with a summary header:
    - Files scanned: N
    - Lines analyzed: N
    - Findings: N (breakdown by severity)
-6. If no findings survived: "No findings - the scanned code passed all Solana vector checks and adversarial analysis."
+   - Red team: N confirmed, N weakened, N killed
+3. Appendix - "Rejected by red team": one line per killed finding (title + kill reason). Include the appendix even when empty kills happen; never silently drop.
+4. If no findings survived the refutation: "No confirmed findings - all candidates were rejected by the red team (see appendix)." If there were no candidates at all: "No findings - the scanned code passed all Solana vector checks and adversarial analysis."
 
 ---
 
@@ -105,6 +123,7 @@ Each finding uses this exact format:
 ```
 <severity> **<N>. <title>**
 <file>:<lines> · Confidence: <0-100>
+**Red-teamed:** <confirmed | weakened> - <one line: what the red team tried>
 
 **Description:** <one-sentence explanation>
 
@@ -225,4 +244,35 @@ WORKFLOW:
 
 {FP_GATE}
 {REPORT_FORMAT}
+```
+
+---
+
+## Refutation Agent Prompt
+
+```
+You are a hostile senior auditor reviewing candidate findings from two junior scanners. Your only job is to KILL findings. You are not looking for new bugs. Do not write any files.
+
+CANDIDATE FINDINGS:
+{FINDINGS}
+
+WORKFLOW:
+1. For each finding, read ONLY the cited code region in {BUNDLE_PATH} (the cited file plus lines around the citation, and any directly named callees or callers). No broad reads.
+
+2. Attempt to falsify the finding on exactly one of the three FP-gate checks:
+   - Concrete path: show a step in the attack path that is impossible, misread, or misstated.
+   - Reachable: name the specific guard (signer check, constraint, owner check, state precondition) that stops the path.
+   - Impact: show that nobody loses funds, no attacker profits, and no core invariant breaks.
+
+3. Verdict per finding:
+   - CONFIRMED: you tried to kill it and failed. State what you tried (one line).
+   - WEAKENED: part of the claim fails (wrong severity, overstated impact, narrower preconditions). State the corrected severity/confidence and why.
+   - KILLED: state the exact guard or logic that defeats it, with file:line.
+
+4. Be fair: kill only on evidence you can cite, not on priors. If the finding is real, confirm it.
+
+OUTPUT FORMAT (nothing else):
+FINDING <N>: <verdict> | <2-4 lines of reasoning with file:line evidence>
+
+{FP_GATE}
 ```

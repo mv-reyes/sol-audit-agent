@@ -5,7 +5,10 @@ reasoning in parallel, sonnet-class agents, FP gate, merge/dedup). Runs 1 and 2 
 21-vector taxonomy; run 3 used 22 (VS22 added mid-day via the kill-condition loop); the
 current taxonomy is 24 vectors (VS23 from the run-4 cold test, VS24 from hostile review).
 Agents were instructed not to consult git history or files outside the bundle. Raw agent
-output is in each run file.
+output is in each run file. On 2026-10-01 the refutation (red-team) stage was added and
+validated: all 4 loopscale findings and both phoenix findings were CONFIRMED with cited
+evidence, and the previously unverified phoenix VS9 candidate was confirmed with a scope
+correction. 0 false positives survived refutation.
 
 | # | Type | Repo @ commit | Scope | Files / lines | Findings | False positives | Result |
 |---|------|---------------|-------|---------------|----------|-----------------|--------|

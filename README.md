@@ -29,7 +29,11 @@ Runs two parallel analysis agents against your Rust codebase:
 | **Vector Scan** | Systematic triage of 24 Solana vulnerability patterns | Known footguns - fast, cheap, high recall |
 | **Adversarial Reasoning** | Free-form adversarial bug hunting | Novel bugs, logic errors, economic exploits the vector list doesn't cover |
 
-Results are deduplicated, scored by confidence, and presented as a single report.
+Results are deduplicated, scored by confidence, and then every finding is attacked by a third agent before you see it:
+
+| Agent | Strategy | What it does |
+|-------|----------|--------------|
+| **Red Team** | Hostile refutation of each candidate finding | Tries to kill every finding on reachability, path, or impact. Kills are shown in a "Rejected by red team" appendix with reasons - never dropped silently |
 
 The vector taxonomy is seeded from real 2026 findings in public Solana repos: a divide-before-multiply truncation that zeroed LP redemptions (Loopscale pricing adapters), a strict-vs-inclusive boundary mismatch that reverted batched orders (manifest), a builder-fee routing bug that credited the wrong party (gmx-solana), a Token-2022 collateral extension policy gap (hylo), and off-hours pricing of equity xAssets (hylo). Classic incident classes (Cashio fake accounts, Wormhole sysvar spoofing) anchor the account-model vectors.
 
@@ -175,7 +179,9 @@ Claude Code gets the best results because it runs two agents with different anal
 2. **Double pass** - Launches both agents in parallel:
    - Vector Scan agent reads the bundle, triages all 24 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
    - Adversarial Reasoning agent reads all files, maps the instruction/account/CPI surface, and reasons adversarially about every handler.
-3. **Merge** - Deduplicates findings, re-numbers, sorts by confidence, presents the report.
+3. **Merge** - Deduplicates findings, re-numbers, sorts by confidence.
+4. **Red team** - A refutation agent reads the cited region of each finding and tries to kill it (impossible step, named guard, or no real impact). CONFIRMED findings are marked `Red-teamed: confirmed`; WEAKENED ones are re-severitied; KILLED ones go to the appendix with the reason.
+5. **Report** - Summary header (files, lines, findings by severity, red-team tally), findings sorted by confidence, then the rejected-by-red-team appendix.
 
 ### Example output
 
@@ -224,6 +230,7 @@ This is the bug Loopscale fixed upstream in commit 908b54ae (merged in PR #3, "d
 - **Fast triage**: 24 vectors are classified in a single pass against signatures verified on real Solana program source (hit-count table in validation/signature-tests.md). Irrelevant vectors are dropped in 1 structured line each.
 - **FP gate**: Every potential finding must pass 3 checks (concrete path, reachable, impactful) before expansion. Kills false positives before they waste tokens.
 - **Hard stop**: Agents do not revisit eliminated vectors or re-scan.
+- **Bounded refutation**: The red team reads only the cited region of each finding (plus directly named callees), not the whole bundle.
 
 Token usage scales with codebase size: the whole source is read once per agent. A ~5k line program fits comfortably in a dual-agent scan; very large workspaces should be scanned per program directory.
 
@@ -234,6 +241,8 @@ Every finding must pass all three checks or it's dropped:
 1. **Concrete attack path** - Can you trace a specific transaction from an entry point to harm? Name the handler and account positions.
 2. **Reachable** - Is the path actually reachable past signer checks, constraints, owner checks, and state prerequisites?
 3. **Impact** - Does the attacker profit or do users lose funds? Pure inconvenience without fund risk is dropped (unless permanent DoS of core functionality).
+
+Then the red team tries to falsify each survivor on exactly one of the same three checks. Only findings that survive attempted refutation are reported as confirmed.
 
 ## Customization
 

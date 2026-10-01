@@ -113,3 +113,18 @@ loopscale/src/pricing/hylo.ts:22-35,62-90 · Confidence: 65
 Dedup: finding 1 identical in both agents (same function, same root cause) -> keep confidence 90. Agent A finding 2 = Agent B findings 2+3 (same root cause class, two sites) -> merged as one finding with two sites, confidence 85. Agent A finding 3 (whirlpool toNumber) unique, confidence 80. Agent B finding 4 (Pyth staleness) unique, confidence 65, no fix (below 80).
 
 Final: 4 findings. TARGET BUG (Meteora divide-before-multiply floor) FOUND by both agents, cold. PASS.
+
+## Refutation pass (2026-10-01, red-team stage validation)
+
+Red Team agent on the 4 merged findings, cited regions only. Result: 4 CONFIRMED, 0 weakened, 0 killed.
+
+- FINDING 1 (meteora floor): CONFIRMED - kill attempt on magnitude misread failed; integer
+  division floors the rate before the multiply (bundle 664-665), no throw, v1 returns 200
+  with wrong values. Multiply-first/divide-last confirmed as the correct fix.
+- FINDING 2 (NaN guards): CONFIRMED - Bn twins guard (533-534, 1197) while legacy paths do
+  not; NaN serializes to null on the live legacy route.
+- FINDING 3 (toNumber throw): CONFIRMED - bn.js toNumber asserts <= 53 bits; no
+  per-position try/catch. Nuance recorded: the v1 500 is the designed fail-loud path;
+  Medium severity holds mainly on the legacy silent-skew.
+- FINDING 4 (Pyth staleness): CONFIRMED - the response type does not even parse
+  publish_time; conf is never checked. Low severity correct.
