@@ -73,55 +73,55 @@ Summary header (files scanned, lines analyzed, finding count by severity), then 
 
 **A. Account model**
 
-**VS1 - MISSING-SIGNER-CHECK** (Critical): Privileged state change keyed to an account never required to sign. Native: missing is_signer. Anchor: /// CHECK authority where Signer<'info> belongs. CONFIRM IF: no Signer type, signer constraint, or is_signer check on the privileged path.
+**VS1 - MISSING-SIGNER-CHECK** (Critical): Grep: Signer<'info> | /// CHECK | UncheckedAccount | is_signer. Privileged state change keyed to an account never required to sign. Native: missing is_signer. Anchor: /// CHECK authority where Signer<'info> belongs. CONFIRM IF: no Signer type, signer constraint, or is_signer check on the privileged path.
 
-**VS2 - MISSING-OWNER-CHECK** (Critical): Account data deserialized and trusted without verifying program ownership; attacker injects a fabricated account. CONFIRM IF: manual deserialization or /// CHECK read with no owner check on a path that moves value. Cashio ($52M) is the canonical incident.
+**VS2 - MISSING-OWNER-CHECK** (Critical): Grep: try_from_slice | try_deserialize_unchecked | ::unpack( | .owner | AccountInfo<'info>. Account data deserialized and trusted without verifying program ownership; attacker injects a fabricated account. CONFIRM IF: manual deserialization or /// CHECK read with no owner check on a path that moves value. Cashio ($52M) is the canonical incident.
 
-**VS3 - ACCOUNT-CONFUSION** (High): Right type, wrong instance: vault A's token account for vault B's, user-supplied account where a canonical PDA belongs. CONFIRM IF: a required account relationship (has_one, constraint, key equality) is missing and substitution moves value.
+**VS3 - ACCOUNT-CONFUSION** (High): Grep: has_one = | constraint = | address = | associated_token::. Right type, wrong instance: vault A's token account for vault B's, user-supplied account where a canonical PDA belongs. CONFIRM IF: a required account relationship (has_one, constraint, key equality) is missing and substitution moves value.
 
-**VS4 - PDA-SEED-BUMP-MISVALIDATION** (High): PDA validated against wrong seeds, an unverified stored bump, or a noncanonical bump; two addresses alias one logical account. CONFIRM IF: seeds bind to unvalidated input or create_program_address accepts attacker bumps, and the collision is exploitable.
+**VS4 - PDA-SEED-BUMP-MISVALIDATION** (High): Grep: seeds = | bump = | find_program_address | create_program_address. PDA validated against wrong seeds, an unverified stored bump, or a noncanonical bump; two addresses alias one logical account. CONFIRM IF: seeds bind to unvalidated input or create_program_address accepts attacker bumps, and the collision is exploitable.
 
-**VS5 - DUPLICATE-MUTABLE-ACCOUNTS** (High): Same account passed twice in two mutable positions assumed distinct; aliased accounting double-counts or overwrites. CONFIRM IF: no require_keys_neq / inequality constraint and a concrete corruption path.
+**VS5 - DUPLICATE-MUTABLE-ACCOUNTS** (High): Grep: #[account(mut | require_keys_neq! | key() !=. Same account passed twice in two mutable positions assumed distinct; aliased accounting double-counts or overwrites. CONFIRM IF: no require_keys_neq / inequality constraint and a concrete corruption path.
 
-**VS6 - CLOSING-ACCOUNT-REVIVAL** (High): Closed account left deserializable within the transaction (discriminator survives, lamports refunded mid-tx) and reused as if live. CONFIRM IF: close path without full wipe plus a revalidation path.
+**VS6 - CLOSING-ACCOUNT-REVIVAL** (High): Grep: close = | close_account | realloc | set_lamports. Closed account left deserializable within the transaction (discriminator survives, lamports refunded mid-tx) and reused as if live. CONFIRM IF: close path without full wipe plus a revalidation path.
 
-**VS7 - CPI-PRIVILEGE-ESCALATION** (Critical): invoke_signed or program authority extended to an unvalidated or attacker-routable callee. CONFIRM IF: target program id or signer seeds are caller-influenceable and the privilege can move funds.
+**VS7 - CPI-PRIVILEGE-ESCALATION** (Critical): Grep: invoke_signed | CpiContext::new_with_signer | program: AccountInfo | spl_token::instruction. invoke_signed or program authority extended to an unvalidated or attacker-routable callee. CONFIRM IF: target program id or signer seeds are caller-influenceable and the privilege can move funds.
 
-**VS8 - REMAINING-ACCOUNTS-ABUSE** (High): remaining_accounts drive accounting, CPI, or transfers without count, order, owner, identity, or aliasing validation. CONFIRM IF: an unvalidated entry enables double-counting, skipping, or injection.
+**VS8 - REMAINING-ACCOUNTS-ABUSE** (High): Grep: remaining_accounts. remaining_accounts drive accounting, CPI, or transfers without count, order, owner, identity, or aliasing validation. CONFIRM IF: an unvalidated entry enables double-counting, skipping, or injection.
 
 **B. Arithmetic**
 
-**VS9 - ARITHMETIC-OVERFLOW** (Medium to High): Token math overflows u64/u128 (panic = handler DoS; wrapping build = silent corruption), or `as u64` truncates a u128 intermediate. CONFIRM IF: a reachable computation overflows with realistic magnitudes (quantify).
+**VS9 - ARITHMETIC-OVERFLOW** (Medium to High): Grep: checked_mul | as u64 | saturating_ | try_into().unwrap(). Token math overflows u64/u128 (panic = handler DoS; wrapping build = silent corruption), or `as u64` truncates a u128 intermediate. CONFIRM IF: a reachable computation overflows with realistic magnitudes (quantify).
 
-**VS10 - DIVIDE-BEFORE-MULTIPLY** (Medium to High): Rate math divides before multiplying; truncation zeroes or shrinks the intermediate. CONFIRM IF: (a / b) * c shape on a value path with reachable inputs that floor to zero or underpay. Anchor: Loopscale pricing-adapters PR #3 (Meteora redemption rate floored to zero under par).
+**VS10 - DIVIDE-BEFORE-MULTIPLY** (Medium to High): Grep: regex (\w+)\s*/\s*[\w.()]+\s*\* | checked_div | .floor(). Rate math divides before multiplying; truncation zeroes or shrinks the intermediate. CONFIRM IF: (a / b) * c shape on a value path with reachable inputs that floor to zero or underpay. Anchor: Loopscale pricing-adapters PR #3 (Meteora redemption rate floored to zero under par).
 
-**VS11 - ROUNDING-DIRECTION** (Medium): Conversions round in the caller's favor instead of the protocol's (deposits floor shares, withdrawals ceil assets, fees ceil). CONFIRM IF: repeatable extraction exceeds cost or a solvency invariant breaks.
+**VS11 - ROUNDING-DIRECTION** (Medium): Grep: div_ceil | try_floor | try_ceil | RoundUp | RoundDown. Conversions round in the caller's favor instead of the protocol's (deposits floor shares, withdrawals ceil assets, fees ceil). CONFIRM IF: repeatable extraction exceeds cost or a solvency invariant breaks.
 
 **C. Oracle and pricing**
 
-**VS12 - ORACLE-TRUST** (High): Price read without freshness enforcement (get_price_unchecked, missing max_age) or without binding the oracle account to the expected feed. CONFIRM IF either mode moves value. Pyth pull enforces age only via no_older_than.
+**VS12 - ORACLE-TRUST** (High): Grep: get_price_no_older_than | get_price_unchecked | PriceUpdateV2 | max_age | staleness. Price read without freshness enforcement (get_price_unchecked, missing max_age) or without binding the oracle account to the expected feed. CONFIRM IF either mode moves value. Pyth pull enforces age only via no_older_than.
 
-**VS13 - MARKET-CLOSED-PRICING** (Medium to High): Equity/RWA asset priced 24/7 from a spot oracle while the underlying venue is closed; fresh by the clock, stale by the market. CONFIRM IF: scheduled-underlying asset, no off-hours guard, profitable gap arbitrage. Anchor: hylo-so/sdk #136.
+**VS13 - MARKET-CLOSED-PRICING** (Medium to High): Grep: unix_timestamp | 86400 | weekday | market_hours. Equity/RWA asset priced 24/7 from a spot oracle while the underlying venue is closed; fresh by the clock, stale by the market. CONFIRM IF: scheduled-underlying asset, no off-hours guard, profitable gap arbitrage. Anchor: hylo-so/sdk #136.
 
 **D. Token program**
 
-**VS14 - TOKEN2022-DANGEROUS-EXTENSIONS** (Medium to High): Token-2022 mints accepted with no extension policy; transfer fees, hooks, permanent delegate, pausable, confidential balances, default-frozen break accounting or enable rug. CONFIRM IF: arbitrary or weakly-vetted mints plus at least one unexcluded dangerous extension with concrete harm. Anchor: hylo-so/sdk #135.
+**VS14 - TOKEN2022-DANGEROUS-EXTENSIONS** (Medium to High): Grep: token_2022 | StateWithExtensions | TransferHook | PermanentDelegate | Pausable | ConfidentialTransfer. Token-2022 mints accepted with no extension policy; transfer fees, hooks, permanent delegate, pausable, confidential balances, default-frozen break accounting or enable rug. CONFIRM IF: arbitrary or weakly-vetted mints plus at least one unexcluded dangerous extension with concrete harm. Anchor: hylo-so/sdk #135.
 
-**VS15 - MINT-DECIMALS-MISMATCH** (Medium): Hardcoded 6/9 decimal assumptions or cross-mint math without scaling by the decimals difference. CONFIRM IF: an accepted mint breaks the assumption with material misvaluation.
+**VS15 - MINT-DECIMALS-MISMATCH** (Medium): Grep: .decimals | 10u64.pow | 1_000_000_000 | 1_000_000. Hardcoded 6/9 decimal assumptions or cross-mint math without scaling by the decimals difference. CONFIRM IF: an accepted mint breaks the assumption with material misvaluation.
 
 **E. Logic and economics**
 
-**VS16 - BOUNDARY-COMPARISON** (Medium): Strict vs inclusive comparison mismatch at a threshold between wrapper and core, or check and execution; equality passes one side and fails the other. CONFIRM IF: naturally reachable boundary plus revert, stuck state, or unintended match. Anchor: manifest PR #738 (PostOnly strict filter vs core equality match reverts batch at exact top-of-book).
+**VS16 - BOUNDARY-COMPARISON** (Medium): Grep: require_gte! | require_gt! | PostOnly | post_only. Strict vs inclusive comparison mismatch at a threshold between wrapper and core, or check and execution; equality passes one side and fails the other. CONFIRM IF: naturally reachable boundary plus revert, stuck state, or unintended match. Anchor: manifest PR #738 (PostOnly strict filter vs core equality match reverts batch at exact top-of-book).
 
-**VS17 - FEE-ROUTING-CONFUSION** (Medium to High): Fee destinations resolved from the wrong field, a field shared across roles, or an unbound user-supplied account; wrong-party credit or self-referral capture. CONFIRM IF: value actually moves to an unintended or attacker-chosen party. Anchor: gmx-solana #416/#406 (builder-fee routing).
+**VS17 - FEE-ROUTING-CONFUSION** (Medium to High): Grep: fee_recipient | treasury | referr | builder_fee | transfer_checked(. Fee destinations resolved from the wrong field, a field shared across roles, or an unbound user-supplied account; wrong-party credit or self-referral capture. CONFIRM IF: value actually moves to an unintended or attacker-chosen party. Anchor: gmx-solana #416/#406 (builder-fee routing).
 
-**VS18 - PERMISSIONLESS-CRANK-GRIEFING** (Medium): Anyone-callable settle/liquidate/expire invoked to force bad settlements, premature expiry, or attacker-chosen ordering. CONFIRM IF: attacker-chosen timing or subset costs victims real value or durably blocks their actions.
+**VS18 - PERMISSIONLESS-CRANK-GRIEFING** (Medium): Grep: crank | keeper | fn settle | fn liquidate | fn expire | permissionless. Anyone-callable settle/liquidate/expire invoked to force bad settlements, premature expiry, or attacker-chosen ordering. CONFIRM IF: attacker-chosen timing or subset costs victims real value or durably blocks their actions.
 
-**VS19 - VAULT-SHARE-INFLATION** (High): First-deposit/empty-pool share-price manipulation via dust deposit plus direct-transfer donation; later depositors round to zero. CONFIRM IF: no minimum-liquidity lock or virtual offset and the attack is profitable. ERC-4626 inflation class, identical on Solana.
+**VS19 - VAULT-SHARE-INFLATION** (High): Grep: total_shares | total_assets | total_supply | lp_mint | amount_to_mint. First-deposit/empty-pool share-price manipulation via dust deposit plus direct-transfer donation; later depositors round to zero. CONFIRM IF: no minimum-liquidity lock or virtual offset and the attack is profitable. ERC-4626 inflation class, identical on Solana.
 
-**VS20 - SIGNER-PAYER-CONFUSION** (High): Fee payer used as authorization identity in relayed or sponsored flows; payer stands in for owner. CONFIRM IF: a third party can sponsor or relay to satisfy the check without the resource owner's key.
+**VS20 - SIGNER-PAYER-CONFUSION** (High): Grep: payer: Signer | pub payer | has_one = authority. Fee payer used as authorization identity in relayed or sponsored flows; payer stands in for owner. CONFIRM IF: a third party can sponsor or relay to satisfy the check without the resource owner's key.
 
-**VS21 - SYSVAR-SUBSTITUTION** (Medium): Sysvar or instructions account read without an id check; forged rent/clock/instruction data defeats checks. CONFIRM IF: unvalidated sysvar read on a decision path. Wormhole ($326M) is the canonical incident.
+**VS21 - SYSVAR-SUBSTITUTION** (Medium): Grep: sysvar | from_account_info | load_instruction_at | next_account_info. Sysvar or instructions account read without an id check; forged rent/clock/instruction data defeats checks. CONFIRM IF: unvalidated sysvar read on a decision path. Wormhole ($326M) is the canonical incident.
 
 ## FP Gate (3 Checks)
 

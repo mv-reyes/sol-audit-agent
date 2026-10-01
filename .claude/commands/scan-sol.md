@@ -99,6 +99,8 @@ Inventory:
   require!(account.is_signer) in native code.
 - In native handlers, walk the next_account_info chain and confirm is_signer before any
   privileged use.
+- Key tell: an authority-typed field declared as AccountInfo or UncheckedAccount (/// CHECK)
+  that is only compared by key, never by signature.
 
 Report only if ALL true:
 - An account authorizes a state change or fund movement.
@@ -117,7 +119,7 @@ audit methodology (Neodyme, Sec3, OtterSec public material).
 
 VS2 - MISSING-OWNER-CHECK (fake account injection)
 Severity: Critical
-Grep: .owner | try_deserialize | AccountInfo<'info> | try_from_slice | /// CHECK
+Grep: try_from_slice | try_deserialize_unchecked | ::unpack( | unpack_unchecked | .owner | AccountInfo<'info> | /// CHECK
 
 Description:
 The program deserializes and trusts account data without verifying the account is owned by
@@ -128,7 +130,8 @@ Applicability gate:
 Any manual deserialization or /// CHECK account whose data is read and trusted.
 
 Inventory:
-- Find all manual deserialization: try_from_slice, try_deserialize_unchecked, unpack.
+- Find all manual deserialization: try_from_slice, try_deserialize_unchecked, unpack,
+  unpack_unchecked.
 - Confirm each read path checks account.owner == expected program, or uses Anchor typed
   Account<'info, T> (owner check is automatic there).
 - Only raw AccountInfo / UncheckedAccount / /// CHECK paths are suspect.
@@ -149,7 +152,7 @@ trust; canonical fake-account incident.
 
 VS3 - ACCOUNT-CONFUSION (arbitrary substitution)
 Severity: High
-Grep: has_one | constraint = | #[account( | associated_token:: | token::mint
+Grep: has_one = | constraint = | address = | associated_token::mint | associated_token::authority | token::authority
 
 Description:
 An account of the right type but the wrong instance is accepted: vault A's token account
@@ -163,8 +166,8 @@ Handlers taking three or more accounts that must reference each other.
 Inventory:
 - Build the account relationship graph per handler: vault.mint == token.mint,
   position.owner == signer.key(), token_account.owner == vault authority, and so on.
-- Anchor: confirm has_one, constraint, and associated_token::* constraints encode the full
-  graph.
+- Anchor: confirm has_one, constraint, address, and associated_token::* constraints encode
+  the full graph.
 - Native: confirm explicit key() == comparisons for every edge in the graph.
 
 Report only if ALL true:
@@ -183,7 +186,7 @@ Anchor: same family as Cashio; one of the most common findings in Solana program
 
 VS4 - PDA-SEED-BUMP-MISVALIDATION
 Severity: High
-Grep: seeds = | bump | find_program_address | create_program_address
+Grep: seeds = | bump = | .bump | &[bump] | seeds::program | find_program_address | create_program_address
 
 Description:
 A PDA is validated against the wrong seeds, a stored bump that was never verified, or a
@@ -216,7 +219,7 @@ Anchor: PDA validation classes in Solana developer documentation and audit liter
 
 VS5 - DUPLICATE-MUTABLE-ACCOUNTS
 Severity: High
-Grep: #[account(mut | require_neq | require_keys_neq | key() != | remaining_accounts
+Grep: #[account(mut | require_keys_neq! | require_neq! | key() != | key() ==
 
 Description:
 The same account is passed twice in two mutable positions the handler assumes are distinct
@@ -245,7 +248,7 @@ Anchor: canonical duplicate-mutable-accounts example in Solana developer documen
 
 VS6 - CLOSING-ACCOUNT-REVIVAL
 Severity: High
-Grep: close = | realloc | .assign( | set_lamports | close(
+Grep: close = | close_account | realloc | .assign( | set_lamports | lamports.borrow_mut | AccountState::Initialized
 
 Description:
 An account is closed (lamports drained) but not rendered unusable within the same
@@ -279,7 +282,7 @@ book audits.
 
 VS7 - CPI-PRIVILEGE-ESCALATION
 Severity: Critical
-Grep: invoke_signed | invoke( | CpiContext | system_instruction | spl_token::instruction
+Grep: invoke_signed | invoke( | CpiContext::new_with_signer | program: AccountInfo | program: Program<'info | spl_token::instruction | system_instruction
 
 Description:
 A cross-program invocation extends signer privileges (PDA seeds via invoke_signed, or the
@@ -292,7 +295,7 @@ Any invoke, invoke_signed, or CpiContext.
 
 Inventory:
 - For every CPI: is the target program id hardcoded or validated? Anchor Program<'info, T>
-  enforces this; raw AccountInfo program accounts do not.
+  enforces this; a raw program: AccountInfo field does not.
 - For every invoke_signed: are the seeds fully program-controlled, or can caller input shift
   which PDA signs?
 - Check remaining_accounts entries used as CPI programs or authorities.
@@ -339,7 +342,8 @@ Do not report if:
   enforced.
 
 Anchor: standard pattern risk in CLMM and order book programs. Raydium CLMM validates each
-remaining tick array by PDA derivation; that is the reference pattern.
+remaining tick array by PDA derivation and pool_id constraint; that is the reference
+pattern.
 
 ---
 
@@ -347,13 +351,13 @@ remaining tick array by PDA derivation; that is the reference pattern.
 
 VS9 - ARITHMETIC-OVERFLOW
 Severity: Medium (handler DoS) to High (silent corruption with wrapping enabled)
-Grep: checked_add|checked_sub|checked_mul|checked_div | as u64 | as u128 | saturating_ | .unwrap()
+Grep: checked_add | checked_sub | checked_mul | checked_div | as u64 | as u128 | saturating_ | try_into().unwrap() | overflow-checks
 
 Description:
 Token math overflows u64/u128. Release BPF panics on overflow by default, so a reachable
 overflow is a permanent handler DoS; if the build enables wrapping, it is silent value
-corruption. Also covers narrowing casts (as u64 on a u128 intermediate) that silently
-truncate.
+corruption. Also covers narrowing casts (as u64 on a u128 intermediate) and
+try_into().unwrap() conversions that silently truncate or panic.
 
 Applicability gate:
 Any arithmetic on token amounts, shares, prices, or timestamps.
@@ -361,7 +365,8 @@ Any arithmetic on token amounts, shares, prices, or timestamps.
 Inventory:
 - Find mul/add/sub on amounts: plain operators, checked_* with unwrap (panics = DoS), or
   saturating_* (silently wrong on debit paths).
-- Find `as u64` / `as u128` casts on computed values; confirm the source range.
+- Find `as u64` / `as u128` casts and try_into() conversions on computed values; confirm
+  the source range.
 - Check Cargo.toml for overflow-checks settings.
 
 Report only if ALL true:
@@ -379,7 +384,7 @@ Anchor: standard Solana arithmetic class.
 
 VS10 - DIVIDE-BEFORE-MULTIPLY
 Severity: Medium to High
-Grep: regex (\w+)\s*/\s*[\w.()]+\s*\* | checked_div | floor
+Grep: regex (\w+)\s*/\s*[\w.()]+\s*\* | checked_div | .floor() | u64::try_from | try_into()
 
 Description:
 Rate or share math divides before it multiplies, so integer truncation zeroes or shrinks
@@ -413,7 +418,7 @@ adopted upstream: multiply-first, divide-last.
 
 VS11 - ROUNDING-DIRECTION
 Severity: Medium
-Grep: div_ceil | try_round | RoundUp|RoundDown | floor | ceil
+Grep: div_ceil | try_floor | try_ceil | try_round | RoundUp | RoundDown | .floor() | .ceil()
 
 Description:
 Value flows round in the caller's favor where they should round in the protocol's. Deposits
@@ -443,7 +448,7 @@ Anchor: standard vault and AMM finding class.
 
 VS12 - ORACLE-TRUST (staleness + substitution)
 Severity: High
-Grep: pyth | switchboard | get_price_no_older_than | get_price_unchecked | pyth_solana_receiver_sdk | load_checked | PriceFeed | staleness | max_age | maximum_age | oracle_interval
+Grep: pyth | switchboard | get_price_no_older_than | get_price_unchecked | PriceUpdateV2 | pyth_solana_receiver_sdk | switchboard_on_demand | load_checked | staleness | max_age | maximum_age | oracle_interval
 
 Description:
 The program prices from an oracle without enforcing freshness against Clock, or without
@@ -456,10 +461,11 @@ Any price, rate, or collateral valuation read from an oracle account.
 
 Inventory:
 - Identify every oracle read: which SDK call, what age bound, what confidence handling.
+  get_price_unchecked is a red flag; get_price_no_older_than(clock, max_age) is the safe
+  form.
 - Confirm the oracle account is constrained: address equality with the expected feed, PDA
   derivation, or has_one binding.
-- Confirm freshness: get_price_no_older_than(clock, max_age) or an equivalent manual
-  now - publish_time check with a sane bound.
+- Confirm freshness bound exists and is sane for the asset's volatility.
 
 Report only if ALL true (either mode):
 - Staleness: no effective age bound, and a stale price moves value.
@@ -510,7 +516,7 @@ Anchor: hylo-so/sdk issue #136 (2026). Off-hours pricing for equity xAssets.
 
 VS14 - TOKEN2022-DANGEROUS-EXTENSIONS
 Severity: Medium to High
-Grep: token_2022 | Token2022 | TOKEN_2022 | ExtensionType | TransferHook | PermanentDelegate | ConfidentialTransfer | Pausable
+Grep: token_2022 | Token2022 | TOKEN_2022 | StateWithExtensions | get_extension_types | ExtensionType | TransferFeeConfig | TransferHook | PermanentDelegate | ConfidentialTransfer | Pausable | DefaultAccountState
 
 Description:
 A program accepts Token-2022 mints without an extension policy. Extensions change transfer
@@ -524,7 +530,8 @@ Any program accepting arbitrary or weakly-vetted Token-2022 mints as collateral,
 or liquidity.
 
 Inventory:
-- Does the program read the mint's extension set, or assume plain SPL semantics?
+- Does the program read the mint's extension set (StateWithExtensions, get_extension_types),
+  or assume plain SPL semantics?
 - For each accepted mint class, check which extensions break invariants: transfer fees
   (accounting drift), hooks (DoS or reentrancy via hook program), permanent delegate
   (clawback), pausable (freeze), confidential mint (opaque balances), default-frozen
@@ -547,7 +554,7 @@ key.
 
 VS15 - MINT-DECIMALS-MISMATCH
 Severity: Medium
-Grep: .decimals | 10u64.pow | 10_u64.pow | 1_000_000_000 | 1_000_000
+Grep: .decimals | 10u64.pow | 10_u64.checked_pow | 1_000_000_000 | 1_000_000
 
 Description:
 The program hardcodes a decimal assumption (6 or 9) or combines raw amounts from two mints
@@ -615,7 +622,7 @@ top-of-book reverted the entire batch.
 
 VS17 - FEE-ROUTING-CONFUSION
 Severity: Medium to High
-Grep: fee_account | fee_recipient | fee_destination | treasury | referr | builder_fee | builder | transfer( | transfer_checked(
+Grep: fee_account | fee_recipient | fee_destination | treasury | referr | builder_fee | builder | transfer_checked( | transfer(
 
 Description:
 Fee credit or debit destinations resolve from the wrong field, a field shared across two
@@ -675,7 +682,7 @@ Anchor: keeper-griefing class in perp and lending audits.
 
 VS19 - VAULT-SHARE-INFLATION
 Severity: High
-Grep: total_shares | total_assets | total_deposits | lp_supply | shares | lp_token_amount | lp_mint
+Grep: total_shares | total_assets | total_deposits | total_supply | shares | lp_supply | lp_token_amount | lp_mint | amount_to_mint
 
 Description:
 First-deposit or empty-pool share-price manipulation. The attacker deposits dust, donates
@@ -706,7 +713,7 @@ math.
 
 VS20 - SIGNER-PAYER-CONFUSION
 Severity: High
-Grep: payer: Signer | pub payer | has_one = authority | Signer<'info>
+Grep: payer: Signer | pub payer | authority: Signer | has_one = authority | Signer<'info>
 
 Description:
 The handler uses the fee payer as the authorization identity when payer and owner differ
@@ -735,13 +742,13 @@ Anchor: live pattern in 2026 codebases with sponsored transactions and relayer f
 
 VS21 - SYSVAR-SUBSTITUTION
 Severity: Medium
-Grep: sysvar | Sysvar | next_account_info | from_account_info | load_instruction_at | load_current_index
+Grep: sysvar | Sysvar | sysvar:: | next_account_info | from_account_info | load_instruction_at | load_current_index | get_stack_height
 
 Description:
 A sysvar or instructions account is taken from the accounts list without checking it is
 the real sysvar address. The attacker passes a fabricated account with forged rent, clock,
 or instruction data to defeat checks. Includes introspection flows that read the
-instructions sysvar without an id check.
+instructions sysvar without an id check (load_instruction_at without _checked).
 
 Applicability gate:
 Native code reading sysvars from the accounts list; any instruction introspection.
