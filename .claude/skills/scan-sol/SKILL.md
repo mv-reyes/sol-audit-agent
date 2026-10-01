@@ -1,6 +1,6 @@
 ---
 name: scan-sol
-description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 22 vectors (VS1-VS22) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis. Scope is auto-detected; findings reported by severity and confidence.
+description: Double-pass vulnerability scanner for Solana and Anchor (Rust) programs. Detects 24 vectors (VS1-VS24) across account model, arithmetic, oracle, token, and economic classes with parallel agent analysis. Scope is auto-detected; findings reported by severity and confidence.
 ---
 
 # Solana Vulnerability Scanner
@@ -9,7 +9,7 @@ Scan Solana and Anchor (Rust) programs for security vulnerabilities. Works on si
 
 ## Scope
 
-Target: `$ARGUMENTS` (defaults to current working directory if empty). Scan all `.rs` files under the target, **always excluding** `target/` directories. By default also exclude `tests/`, `test/`, and `benches/` directories; if the user appends `with-tests`, include them. If the user appends `include-sdk`, also bundle `.ts` and `.js` source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`). Use `include-sdk` for Solana codebases where SDK, client, or pricing-adapter code carries security-relevant math alongside the on-chain program.
+Target: the first non-flag token of `$ARGUMENTS` (defaults to current working directory if none). `with-tests` and `include-sdk` are flags and may appear in any position; they are never the target. Scan all `.rs` files under the target, **always excluding** `target/` directories. By default also exclude `tests/`, `test/`, and `benches/` directories; with the `with-tests` flag, include them. With the `include-sdk` flag, also bundle `.ts` and `.js` source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`). Use `include-sdk` for Solana codebases where SDK, client, or pricing-adapter code carries security-relevant math alongside the on-chain program.
 
 ## Workflow
 
@@ -33,15 +33,15 @@ Before doing anything else, print this banner exactly as shown:
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
 
  ◈ Double-pass audit engine for Solana and Anchor programs
- ◈ 22 vectors ∙ 5 classes ∙ parallel analysis
+ ◈ 24 vectors ∙ 5 classes ∙ parallel analysis
 ```
 
 ### Step 1 - Prepare
 
 1. Glob for all in-scope `.rs` files (plus `.ts`/`.js` when `include-sdk` was passed).
-2. Count total lines across all files. If zero, stop and tell the user no Rust source files were found.
-3. Concatenate all in-scope `.rs` files into `/tmp/sol-scan-bundle.rs` using bash, with `// === FILE: <path> ===` separators between each file. Record the total line count.
-4. Note the project shape for the agents: presence of `Anchor.toml`, `#[program]` macros, and `declare_id!` calls indicate Anchor; raw `entrypoint!` / `process_instruction` indicates native. Both can coexist.
+2. Count total lines across all files. If zero, stop and tell the user no source files were found.
+3. Concatenate all in-scope files into `/tmp/sol-scan-bundle.rs` using bash, with `// === FILE: <path> ===` separators between each file. (The `.rs` name is a convention; the bundle may hold mixed languages under `include-sdk`. When scanning multiple targets in one session, use a unique bundle name per target.) Record the bundle's total line count including separators.
+4. Record build notes for the agents (`BUILD_NOTES`): project shape (presence of `Anchor.toml`, `#[program]` macros, and `declare_id!` calls indicate Anchor; raw `entrypoint!` / `process_instruction` indicates native; both can coexist) and any `overflow-checks` settings found in Cargo.toml files.
 
 ### Step 2 - Double Pass (parallel)
 
@@ -53,7 +53,8 @@ Launch **both** agents simultaneously using two Task tool calls in a single mess
 
 Prompt the agent with the Vector Scan Agent Prompt below. Interpolate:
 - `{BUNDLE_PATH}` -> `/tmp/sol-scan-bundle.rs`
-- `{LINE_COUNT}` -> the total line count
+- `{LINE_COUNT}` -> the bundle's total line count including separators
+- `{BUILD_NOTES}` -> the build notes from prepare step 4
 - `{VECTORS}` -> the full "Solana Vulnerability Vectors" section below (copy it verbatim into the prompt)
 - `{FP_GATE}` -> the "FP Gate" section below
 - `{REPORT_FORMAT}` -> the "Report Format" section below
@@ -131,10 +132,12 @@ You are a security auditor scanning Solana and Anchor (Rust) programs for vulner
 
 CRITICAL OUTPUT RULE: Return findings ONLY in your final text response. Do NOT write any files.
 
-WORKFLOW:
-1. Read the bundle file at {BUNDLE_PATH} in parallel 1000-line chunks on your first turn. Total lines: {LINE_COUNT}. Compute offsets and issue all Read calls at once. These are your ONLY file reads.
+BUILD NOTES: {BUILD_NOTES}
 
-2. TRIAGE PASS. For each vector (VS1-VS22), classify into Skip / Borderline / Survive:
+WORKFLOW:
+1. Read the bundle file at {BUNDLE_PATH} in parallel 1000-line chunks on your first turn. Total lines: {LINE_COUNT}. Compute offsets and issue all Read calls at once. These are your ONLY file reads. Configuration facts come from BUILD NOTES above, not from extra reads.
+
+2. TRIAGE PASS. For each vector (VS1-VS24), classify into Skip / Borderline / Survive:
    - Skip: the construct AND underlying concept are both absent from this codebase.
    - Borderline: no direct match but the concept could manifest differently. 1-sentence check: name the specific handler where it manifests AND describe the exploit. Promote only if both are concrete, otherwise drop.
    - Survive: the construct or pattern is clearly present.
@@ -169,7 +172,7 @@ SOLANA KNOWN HAZARDS (keep in mind while reading):
 - Account closure only settles at transaction end; mid-transaction revival is possible
 - invoke_signed extends PDA privilege to whatever program the caller routes it through
 - remaining_accounts carry no Anchor constraints; every entry needs manual validation
-- Release builds panic on overflow (handler DoS) unless wrapping is enabled
+- Release builds wrap silently on overflow by default; overflow-checks = true turns it into a panic (handler DoS). Both modes are exploitable
 - Divide-before-multiply truncates to zero; floor() amplifies it
 - Rounding that favors the caller is extractable at scale
 - Pyth pull oracles enforce freshness only through the no_older_than API
@@ -187,6 +190,7 @@ These bugs have NO obvious failure signal. Nothing reverts. Nothing breaks. The 
 - Divide-before-multiply rates that floor to zero for legitimate redemptions: normal usage, wrong answers.
 - Off-hours pricing of equity or RWA assets: oracle is fresh, market is closed, arbitrage window is open.
 - Stored bump never revalidated: old PDAs keep passing after seed layouts change.
+- Zero or extreme numeric init parameters: divisibility checks pass at zero, so a market comes up with zero lot sizes or zero tick sizes and drains whoever trades on it.
 - First-deposit vault with no minimum liquidity: the trap waits for a victim, not an attacker.
 
 WORKFLOW:

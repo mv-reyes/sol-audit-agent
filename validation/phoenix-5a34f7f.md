@@ -64,3 +64,28 @@ behave exactly as described; there are no nonzero checks on either parameter.
   does not invent account-model bugs.
 
 Cold test result: 2 findings (both real, conditional-impact), 0 false positives.
+
+## Re-run with the 24-vector taxonomy (2026-10-01, after hostile review)
+
+Same bundle, vector agent only, 24 vectors (VS1-VS24) + BUILD_NOTES (native; overflow-checks = true).
+
+Triage: Survive 9 (VS1, VS2, VS3, VS4, VS6, VS7, VS9, VS17, VS23), Borderline 10, Skip 5.
+Total 9 + 10 + 5 = 24.
+
+Deep pass: VS1-VS4, VS6, VS7, VS17 dropped with structured reasons (signer/owner/constraint/
+bump/CPI/fee-destination enforcement all present and verified). Two confirms:
+
+1. VS23 CONFIRM [85] - zero lot/tick-size parameters pass market initialization. The vector
+   pass now finds the class that only the free-form agent caught in run 4; this is the
+   direct evidence that the VS23 addition closed the gap. Finding text and fix in the
+   agent output (initialize.rs asserts; proposed nonzero guard).
+
+2. VS9 CONFIRM [75] - candidate: a resting ask at an extreme price makes the
+   price * tick_size * num_base_lots product in match_order overflow u64 and panic
+   (overflow-checks = true per BUILD_NOTES), bricking buys that sweep the level.
+   Orchestrator note: no max-price bound on ask placement was found on a spot check
+   (only a Ticks::ONE floor for market orders), so the candidate is plausible but not
+   fully verified end-to-end (u64 widths of the adjusted-lot types not re-derived).
+   Recorded as an unverified candidate, not a confirmed finding.
+
+False positives in the re-run: 0 confirmed FPs (one unverified candidate disclosed as such).

@@ -4,6 +4,8 @@ Target: LoopscaleLabs/loopscale-pricing-adapters @ 96dcc95aecab (parent of fix c
 Scope: `src/` (14 .ts files, 1487 lines), include-sdk semantics
 Bundle: `_validation-clones/bundles/loopscan-bundle.ts`
 
+Taxonomy note: this run executed with the 21-vector taxonomy (VS1-VS21); VS22 was added later the same day and VS23/VS24 after hostile review, so the triage totals below count 21 vectors. The target vector (VS10) is unchanged across versions.
+
 ## Agent A - Vector Scan (raw)
 
 ## TRIAGE PASS

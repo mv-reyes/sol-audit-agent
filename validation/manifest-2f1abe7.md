@@ -4,6 +4,8 @@ Target: Bonasa-Tech/manifest @ 2f1abe7738b26144a8bc5a4d30b6a57a3dd3ba82 (PR #738
 Scope: `programs/wrapper` (all 31 .rs files) + `programs/manifest/src/state` + `programs/manifest/src/program` top level = 46 files, 12,620 lines
 Bundle: `_validation-clones/bundles/manifest-bundle.rs`
 
+Taxonomy note: this run executed with the 21-vector taxonomy (VS1-VS21); see the loopscale run file for the version history. The triage below omits the mandated total-count line; counts are Skip 6 + Borderline 4 + Survive 11 = 21.
+
 ## Agent A - Vector Scan (raw)
 
 ### Triage
@@ -75,6 +77,6 @@ programs/manifest/src/state/utils.rs:369,438 · programs/manifest/src/state/mark
 
 ## Orchestrator merge (Step 3)
 
-Agent A found the TARGET BUG (wrapper PostOnly strict-vs-equality boundary, batch revert) cold, confidence 85, exact lines, exact fix (>= / <=). PASS.
+Agent A found the TARGET BUG (wrapper PostOnly strict-vs-equality boundary, batch revert) cold, confidence 85, exact lines, and proposed the >= / <= fix. Note: PR #738 is a red-black-tree compute optimization and contains no PostOnly fix, so there is no upstream fix commit to compare against; the proposed fix follows from the core's equality semantics. PASS.
 Agent B produced one additional candidate (global-maker zero-rounding revert), history-informed, not counted for recall; flagged for manual follow-up.
 Final report: 1 finding (target bug), plus 1 follow-up note.

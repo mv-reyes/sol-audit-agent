@@ -16,7 +16,7 @@
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
 
  ◈ Single-pass audit engine for Solana and Anchor programs
- ◈ 22 vectors ∙ 5 classes
+ ◈ 24 vectors ∙ 5 classes
 ```
 
 When the user asks to scan for Solana vulnerabilities or run a Solana audit, follow this workflow against all `.rs` files in the project (always excluding `target/`; exclude `tests/`, `test/`, and `benches/` unless the user asks for them). Append `include-sdk` to also scan `.ts`/`.js` SDK, client, and pricing-adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
@@ -27,7 +27,7 @@ When the user asks to scan for Solana vulnerabilities or run a Solana audit, fol
 Read all in-scope `.rs` files. Prioritize program entry points and instruction handlers first (`lib.rs`, `instructions/`, `processor/`), then state definitions, then helpers and math libraries.
 
 ### Step 2 - Triage
-For each of the 22 vectors below (VS1-VS22), classify as Skip / Borderline / Survive:
+For each of the 24 vectors below (VS1-VS24), classify as Skip / Borderline / Survive:
 - **Skip**: the construct AND underlying concept are both absent.
 - **Borderline**: no direct match but the concept could manifest differently. 1-sentence relevance check - name the specific handler AND describe the exploit. Promote only if both are concrete, otherwise drop.
 - **Survive**: the construct or pattern is clearly present.
@@ -54,6 +54,7 @@ Ask of every handler: What if this account is fake, substituted, or duplicated? 
 - Divide-before-multiply rates that floor to zero for legitimate redemptions: normal usage, wrong answers.
 - Off-hours pricing of equity or RWA assets: oracle is fresh, market is closed, arbitrage window is open.
 - Stored bump never revalidated: old PDAs keep passing after seed layouts change.
+- Zero or extreme numeric init parameters: divisibility checks pass at zero; the market comes up broken and drains whoever trades on it.
 - First-deposit vault with no minimum liquidity: the trap waits for a victim, not an attacker.
 
 ### Step 5 - Report
@@ -101,7 +102,7 @@ Summary header (files scanned, lines analyzed, finding count by severity), then 
 
 **E. Logic and economics**
 
-**VS16 - BOUNDARY-COMPARISON** (Medium): Grep: require_gte! | require_gt! | PostOnly | post_only. Strict vs inclusive comparison mismatch at a threshold between wrapper and core, or check and execution; equality passes one side and fails the other. CONFIRM IF: naturally reachable boundary plus revert, stuck state, or unintended match. Anchor: manifest PR #738 (PostOnly strict filter vs core equality match reverts batch at exact top-of-book).
+**VS16 - BOUNDARY-COMPARISON** (Medium): Grep: require_gte! | require_gt! | PostOnly | post_only. Strict vs inclusive comparison mismatch at a threshold between wrapper and core, or check and execution; equality passes one side and fails the other. CONFIRM IF: naturally reachable boundary plus revert, stuck state, or unintended match. Anchor: manifest PR #738 discussion (wrapper PostOnly strict filter vs core equality match; batch reverts at exact top-of-book).
 
 **VS17 - FEE-ROUTING-CONFUSION** (Medium to High): Grep: fee_recipient | treasury | referr | builder_fee | transfer_checked(. Fee destinations resolved from the wrong field, a field shared across roles, or an unbound user-supplied account; wrong-party credit or self-referral capture. CONFIRM IF: value actually moves to an unintended or attacker-chosen party. Anchor: gmx-solana #416/#406 (builder-fee routing).
 
@@ -114,7 +115,11 @@ Summary header (files scanned, lines analyzed, finding count by severity), then 
 **VS21 - SYSVAR-SUBSTITUTION** (Medium): Grep: sysvar | from_account_info | load_instruction_at | next_account_info. Sysvar or instructions account read without an id check; forged rent/clock/instruction data defeats checks. CONFIRM IF: unvalidated sysvar read on a decision path. Wormhole ($326M) is the canonical incident.
 
 
-**VS22 - SILENTLY-DROPPED-PARAMETER** (Medium to High): A public parameter is accepted but silently dropped or shadowed: two fields carry one concept and only one is read, an Option is defaulted where the instruction supports a value, a caller hint is ignored. The tx builds fine but targets accounts or amounts the caller never chose. Grep: unwrap_or_else | unwrap_or( | #[builder(default | .or(self. CONFIRM IF: the ignored value changes the account, address, destination, or amount used, with concrete harm (fees routed wrong, instructions referencing unchosen accounts, documented feature inoperative). Anchor: gmx-solana PR #447 (dropped params.nonce; hardcoded None escrow for builder fees).
+**VS22 - SILENTLY-DROPPED-PARAMETER** (Medium to High): Grep: unwrap_or_else | unwrap_or( | #[builder(default | .or(self. A public parameter is accepted but silently dropped or shadowed: two fields carry one concept and only one is read, an Option is defaulted where the instruction supports a value, a caller hint is ignored. The tx builds fine but targets accounts or amounts the caller never chose. CONFIRM IF: the ignored value changes the account, address, destination, or amount used, with concrete harm (fees routed wrong, instructions referencing unchosen accounts, documented feature inoperative). Anchor: gmx-solana PR #447 (dropped params.nonce; hardcoded None escrow for builder fees).
+
+**VS23 - UNVALIDATED-INIT-PARAMETERS** (Medium to High): Grep: fn initialize | process_initialize | InitializeParams | assert_with_msg | unwrap_or(. Init/config paths accept numeric parameters without nonzero or range bounds; divisibility and modulo checks pass trivially at zero, so a market comes up with zero lot sizes, zero tick sizes, or zero fees and harms everyone who uses it after. CONFIRM IF: an unchecked numeric parameter produces broken economics under normal usage with later-user loss. Anchor: this scanner's phoenix-v1 cold test (zero base lot size and zero tick size pass all init checks).
+
+**VS24 - STALE-ACCOUNT-READS** (Medium): Grep: reload() | load_mut | AccountLoader. An account is read, a CPI mutates it (token balance, mint supply, oracle state), and the handler keeps using the pre-CPI copy; Anchor AccountLoader needs explicit reload(). CONFIRM IF: a pre-CPI value is used after a CPI that can change it, with concrete mis-accounting or a bypassed check. Anchor: classic Anchor footgun (Zellic Anchor vulnerabilities writeup).
 
 ## FP Gate (3 Checks)
 

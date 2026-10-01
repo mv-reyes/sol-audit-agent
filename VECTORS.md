@@ -1,14 +1,14 @@
-# Solana Vulnerability Vectors (VS1-VS22)
+# Solana Vulnerability Vectors (VS1-VS24)
 
-22 vectors for Solana and Anchor (Rust) programs. Grouped in five classes:
+24 vectors for Solana and Anchor (Rust) programs. Grouped in five classes:
 
 - **A. Account model (VS1-VS8)**: the Solana-specific core. Most real Solana exploits live here.
 - **B. Arithmetic (VS9-VS11)**: token math, truncation, rounding.
 - **C. Oracle and pricing (VS12-VS13)**: freshness, feed binding, market hours.
 - **D. Token program (VS14-VS15)**: Token-2022 extensions, decimals.
-- **E. Logic and economics (VS16-VS21)**: boundaries, fees, cranks, vaults, authority, sysvars.
+- **E. Logic and economics (VS16-VS24)**: boundaries, fees, cranks, vaults, authority, sysvars, parameters, stale reads.
 
-Grep signatures were verified against real program source (raydium-clmm, raydium-cp-swap, manifest, hylo, metadao futarchy; hit counts recorded 2026-10-01). Signatures name concrete APIs and idioms, not concepts: `get_price_unchecked`, not "oracle". They are triage hints, not proofs.
+Grep signatures were verified against real program source (raydium-clmm, raydium-cp-swap, manifest, hylo, metadao futarchy; full hit-count table in validation/signature-tests.md). Signatures name concrete APIs and idioms, not concepts: `get_price_unchecked`, not "oracle". They are triage hints, not proofs. Signatures carry positive and negative signal: a hit on the safe idiom (`Signer<'info>`, `require_keys_neq!`) marks where enforcement should be verified; it never proves a bug by itself.
 
 Triage discipline: a grep hit scopes the search; it is never evidence. Evidence is a concrete code path that passes the FP gate. When a compensating control from a vector's "Do not report if" list is present, drop the vector in one line and move on.
 
@@ -16,7 +16,8 @@ Merge/split decisions vs. the raw coverage list:
 - Oracle staleness and oracle account substitution are merged into VS12: same grep surface, same confirmation site (oracle account validation plus clock comparison), two confirm modes.
 - Divide-before-multiply (VS10) is split from rounding direction (VS11): different root cause, different fix, different incident anchors.
 - All other requested items map one-to-one. VS22 was added during validation: a recall run against
-  gmx-solana missed the builder-fee nonce/escrow bug class until this vector existed.
+  gmx-solana missed the builder-fee escrow bug class until this vector existed. VS23 came from the
+  phoenix cold test (zero-parameter init gaps), VS24 from hostile review of the taxonomy.
 
 ---
 
@@ -202,8 +203,10 @@ Applicability gate:
 Any close path, realloc-to-zero, or manual lamport drain.
 
 Inventory:
-- Anchor close = destination zeroes data and drains at transaction end; check nothing
-  refunds lamports to the closed account mid-transaction.
+- Anchor close = destination zeroes data and drains lamports at the end of the
+  instruction (AccountsExit); the account itself persists until transaction end. Check
+  that no later instruction in the same transaction refunds lamports to it: a refunded,
+  zeroed account can be reinitialized, which is the revival path.
 - Manual close: confirm the discriminator is wiped AND data zeroed (or ownership assigned
   away), not just lamports moved.
 - Check realloc(0) plus drain patterns for discriminator residue.
@@ -241,6 +244,9 @@ Inventory:
 - For every invoke_signed: are the seeds fully program-controlled, or can caller input shift
   which PDA signs?
 - Check remaining_accounts entries used as CPI programs or authorities.
+- Check reentrancy: can the callee re-enter this program before state settles? Direct
+  self-CPI is permitted on Solana. State changes made only after the CPI are the
+  exposure window.
 
 Report only if ALL true:
 - Signed authority reaches a program or account set the caller can influence.
@@ -294,24 +300,28 @@ pattern.
 
 ```
 VS9 - ARITHMETIC-OVERFLOW
-Severity: Medium (handler DoS) to High (silent corruption with wrapping enabled)
+Severity: Medium (handler DoS with overflow-checks on) to High (silent wrap corruption with checks off)
 Grep: checked_add | checked_sub | checked_mul | checked_div | as u64 | as u128 | saturating_ | try_into().unwrap() | overflow-checks
 
 Description:
-Token math overflows u64/u128. Release BPF panics on overflow by default, so a reachable
-overflow is a permanent handler DoS; if the build enables wrapping, it is silent value
-corruption. Also covers narrowing casts (as u64 on a u128 intermediate) and
-try_into().unwrap() conversions that silently truncate or panic.
+Token math overflows u64/u128. Two failure modes with opposite defaults. A plain release
+build wraps silently (Rust overflow-checks default to off in release): silent value
+corruption. A project that sets overflow-checks = true (the Anchor CLI enforces it on
+build) panics instead: a reachable overflow becomes a permanent handler DoS. Also covers
+narrowing conversions: `as u64` on a u128 intermediate silently truncates;
+try_into().unwrap() panics on out-of-range.
 
 Applicability gate:
 Any arithmetic on token amounts, shares, prices, or timestamps.
 
 Inventory:
-- Find mul/add/sub on amounts: plain operators, checked_* with unwrap (panics = DoS), or
-  saturating_* (silently wrong on debit paths).
+- Find mul/add/sub on amounts: plain operators (wrap or panic depending on build
+  settings), checked_* with unwrap (panics = DoS), or saturating_* (silently wrong on
+  debit paths).
 - Find `as u64` / `as u128` casts and try_into() conversions on computed values; confirm
   the source range.
-- Check Cargo.toml for overflow-checks settings.
+- The prepare step records overflow-checks settings from Cargo.toml. If unknown, evaluate
+  both modes and report the worse reachable one.
 
 Report only if ALL true:
 - A reachable computation overflows or truncates with realistic magnitudes (quantify the
@@ -328,7 +338,11 @@ Anchor: standard Solana arithmetic class.
 
 VS10 - DIVIDE-BEFORE-MULTIPLY
 Severity: Medium to High
-Grep: regex (\w+)\s*/\s*[\w.()]+\s*\* | checked_div | .floor() | u64::try_from | try_into()
+Grep: checked_div | .floor() | u64::try_from | try_into()
+Signature regex (single-expression form only): (\w+)\s*/\s*[\w.()]+\s*\*
+Note: the two-statement form (rate stored after division, multiplied later) has no
+reliable signature and is found by reading, not grep. The Loopscale anchor bug is the
+two-statement form.
 
 Description:
 Rate or share math divides before it multiplies, so integer truncation zeroes or shrinks
@@ -354,7 +368,8 @@ Do not report if:
 - Multiply-first, divide-last ordering, or wide intermediates (u128) with documented,
   protocol-favorable rounding.
 
-Anchor: LoopscaleLabs/loopscale-pricing-adapters PR #3 (2026). Meteora redemption rate
+Anchor: LoopscaleLabs/loopscale-pricing-adapters, fix commit 908b54ae merged in PR #3
+(2026). Meteora redemption rate
 computed divide-before-multiply and floored; LP redemption under par returned zero. Fix
 adopted upstream: multiply-first, divide-last.
 
@@ -394,7 +409,7 @@ Anchor: standard vault and AMM finding class.
 ```
 VS12 - ORACLE-TRUST (staleness + substitution)
 Severity: High
-Grep: pyth | switchboard | get_price_no_older_than | get_price_unchecked | PriceUpdateV2 | pyth_solana_receiver_sdk | switchboard_on_demand | load_checked | staleness | max_age | maximum_age | oracle_interval
+Grep: pyth | switchboard | get_price_no_older_than | get_price_unchecked | PriceUpdateV2 | pyth_solana_receiver_sdk | switchboard_on_demand | staleness | max_age | maximum_age | oracle_interval
 
 Description:
 The program prices from an oracle without enforcing freshness against Clock, or without
@@ -428,6 +443,9 @@ audits. Pyth pull receiver enforces age only through the no_older_than API.
 VS13 - MARKET-CLOSED-PRICING
 Severity: Medium to High
 Grep: unix_timestamp | 86400 | weekday | day_of_week | chrono | market_hours | trading_session
+Signature note: market_hours / trading_session / weekday are tokens of the compensating
+control; a vulnerable program is defined by their absence. Triage this vector from the
+applicability gate (does the code price scheduled-underlying assets?), not from grep hits.
 
 Description:
 An equity, forex, or commodity-linked asset is priced 24/7 from a last-trade oracle while
@@ -651,7 +669,9 @@ Inventory:
 - First-deposit path: is there a minimum liquidity lock, dead shares, or a virtual
   shares/assets offset?
 - Donation surface: can tokens reach the vault outside the deposit instruction (direct
-  transfer to the vault token account)?
+  transfer to the vault token account)? Lamports count too: a program that tracks SOL
+  balances with internal counters can be desynced by direct system transfers to its
+  accounts.
 - Rounding: do share calculations floor in the protocol's favor on deposit?
 
 Report only if ALL true:
@@ -767,6 +787,74 @@ final-output-token escrow to None, leaving builder fees with no settlement path.
 
 ---
 
+VS23 - UNVALIDATED-INIT-PARAMETERS
+Severity: Medium to High
+Grep: fn initialize | process_initialize | InitializeParams | assert_with_msg | unwrap_or(
+
+Description:
+An initialization or configuration path accepts numeric parameters without nonzero or
+range bounds. Divisibility and modulo checks pass trivially at zero, so a market, pool, or
+vault comes up with broken economics: zero lot sizes, zero tick sizes, zero fees, extreme
+ratios. Everything operates; the math just answers wrong for everyone who uses it after.
+
+Applicability gate:
+Any init, create, or configure path taking numeric parameters, permissionless or admin.
+
+Inventory:
+- List every numeric init/config parameter. For each, find its bounds check.
+- Flag parameters whose only check is divisibility or modulo (zero passes), and parameters
+  with no check at all.
+- Trace what zero and extreme values do downstream: lot sizes, tick sizes, rates, fees,
+  thresholds.
+
+Report only if ALL true:
+- A numeric parameter lacks a nonzero or range check.
+- The broken configuration is reachable (permissionless init, or an admin value with no
+  guard) and produces wrong economics under normal usage.
+- A later user loses value or the instance operates incorrectly.
+
+Do not report if:
+- Nonzero and range asserts cover every economics-bearing parameter.
+
+Anchor: this scanner's cold test on Ellipsis-Labs/phoenix-v1 (validation/phoenix-5a34f7f.md).
+Zero raw_base_units_per_base_unit and zero tick size pass all initialization checks and
+produce drainable markets.
+
+---
+
+VS24 - STALE-ACCOUNT-READS (missing reload after CPI)
+Severity: Medium
+Grep: reload() | load_mut | AccountLoader | borrow() | borrow_mut()
+
+Description:
+An account is deserialized once, a CPI mutates it (token balance, mint supply, oracle
+state), and the handler keeps using the pre-CPI copy for accounting or validation. Anchor
+AccountLoader data requires an explicit reload(); typed accounts deserialized before the
+CPI are stale by value.
+
+Applicability gate:
+Handlers that read account data, then CPI, then use the same data.
+
+Inventory:
+- For each account read before a CPI, check whether post-CPI logic re-reads (reload()) or
+  reuses the stale copy.
+- Token balances and mint supplies are the usual victims; check any invariant computed
+  from pre-CPI values.
+
+Report only if ALL true:
+- A value read before a CPI is used after it.
+- The CPI (or an attacker-composed instruction in between) can change the value.
+- The staleness produces concrete mis-accounting or a bypassed check.
+
+Do not report if:
+- reload() or re-deserialization happens after the CPI, or the CPI cannot mutate the
+  account.
+
+Anchor: classic Anchor footgun, documented in the Zellic Anchor vulnerabilities writeup
+linked in the README.
+
+---
+
 ## Cross-reference: required coverage
 
 | Required item | Vector |
@@ -794,3 +882,5 @@ final-output-token escrow to None, leaving builder fees with no settlement path.
 | signer-vs-payer confusion | VS20 |
 | sysvar substitution | VS21 |
 | (added in validation) silently dropped parameter | VS22 |
+| (added in validation) unvalidated init parameters | VS23 |
+| (added in review) stale account reads after CPI | VS24 |

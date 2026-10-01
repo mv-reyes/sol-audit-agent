@@ -26,7 +26,7 @@ Runs two parallel analysis agents against your Rust codebase:
 
 | Agent | Strategy | What it catches |
 |-------|----------|-----------------|
-| **Vector Scan** | Systematic triage of 22 Solana vulnerability patterns | Known footguns - fast, cheap, high recall |
+| **Vector Scan** | Systematic triage of 24 Solana vulnerability patterns | Known footguns - fast, cheap, high recall |
 | **Adversarial Reasoning** | Free-form adversarial bug hunting | Novel bugs, logic errors, economic exploits the vector list doesn't cover |
 
 Results are deduplicated, scored by confidence, and presented as a single report.
@@ -81,13 +81,15 @@ The vector taxonomy is seeded from real 2026 findings in public Solana repos: a 
 | VS20 | Signer-vs-payer confusion | High |
 | VS21 | Sysvar substitution | Medium |
 | VS22 | Silently dropped parameter | Medium to High |
+| VS23 | Unvalidated init parameters | Medium to High |
+| VS24 | Stale account reads after CPI | Medium |
 
 Full definitions with grep signatures and confirm-if criteria: [VECTORS.md](VECTORS.md).
 
 ## Requirements
 
 - One of: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Cursor](https://cursor.sh), [Windsurf](https://codeium.com/windsurf), or [GitHub Copilot](https://github.com/features/copilot)
-- Rust source files (`.rs`) in the target directory
+- Rust source files (`.rs`) in the target directory. TypeScript/JavaScript SDK and adapter code can be included with the `include-sdk` flag.
 - No other dependencies. Nothing to compile, nothing to install beyond the prompt files.
 
 ## Installation
@@ -162,7 +164,7 @@ Ask your agent:
 | Architecture | Dual-agent parallel (vector scan + adversarial) | Single-agent sequential |
 | Speed | Both passes run simultaneously | One pass at a time |
 | Depth | Two different cognitive strategies catch more bugs | Same vectors, single strategy |
-| Token usage | ~60-100k across both agents | ~35-60k single agent |
+| Token usage | Two agents, roughly 2x a single pass | Single pass |
 | Invocation | `/scan-sol` slash command | Natural language prompt |
 
 Claude Code gets the best results because it runs two agents with different analysis strategies in parallel. Cursor/Windsurf/Copilot run the same vectors as a single sequential pass.
@@ -171,13 +173,13 @@ Claude Code gets the best results because it runs two agents with different anal
 
 1. **Prepare** - Finds all `.rs` files (always excludes `target/`; excludes `tests/`, `test/`, `benches/` unless you pass `with-tests`), concatenates them into a temporary bundle with file separators, and detects Anchor vs native shape. Pass `include-sdk` to also bundle `.ts`/`.js` SDK and adapter source (excluding `node_modules/`, `dist/`, `build/`, `coverage/`).
 2. **Double pass** - Launches both agents in parallel:
-   - Vector Scan agent reads the bundle, triages all 22 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
+   - Vector Scan agent reads the bundle, triages all 24 vectors, drops irrelevant ones in 1 line each, deep-analyzes survivors.
    - Adversarial Reasoning agent reads all files, maps the instruction/account/CPI surface, and reasons adversarially about every handler.
 3. **Merge** - Deduplicates findings, re-numbers, sorts by confidence, presents the report.
 
 ### Example output
 
-Verbatim from validation run 1 ([Loopscale pricing adapters @ `96dcc95`](validation/loopscale-96dcc95.md), pre-fix commit; full run in [validation/](validation/)):
+From validation run 1 ([Loopscale pricing adapters @ `96dcc95`](validation/loopscale-96dcc95.md), pre-fix commit; full run in [validation/](validation/)). Finding text verbatim from the adversarial agent; the merged report deduplicates it with the vector agent's identical find:
 
 ```
 📋 Solana Scan Report
@@ -185,46 +187,45 @@ Files scanned: 14
 Lines analyzed: 1,487
 Findings: 4 (1 High, 2 Medium, 1 Low)
 
-🟠 **1. Meteora LP pricing floored to whole dollars by integer divide-before-multiply**
-src/pricing/meteora.ts:79-80 · Confidence: 90
+🟠 **1. Meteora v1 handler truncates LP redemption rate to a whole number via BigInt scalar division**
+src/pricing/meteora.ts:73-83 · Confidence: 90
 
-**Description:** getMeteoraTokenBalancesBn() computes a per-LP exchange-rate scalar with
-integer division (tokenAOutAmount / 1_000_000) before multiplying by the user's balance,
-discarding all sub-unit precision of the quote and zeroing it entirely when one LP unit
-is worth less than 1 USDC base-unit multiple.
+**Description:** In getMeteoraTokenBalancesBn the per-unit withdraw quote is computed as
+BigInt(quote.tokenAOutAmount.toString()) / quoteInput - a BigInt integer division - so the
+LP-to-USDC rate is floored to an integer (e.g. 1.08 -> 1, 0.95 -> 0), silently mispricing
+or entirely zeroing out the LP collateral on the v1 endpoint while
+delete balances[metMint] still removes the original balance.
 
 **Attack path:**
-1. A request to /v1/decompile_mints includes the Meteora LP mint with any balance.
-2. amm.getWithdrawQuote(1_000_000, 0, USDC) returns tokenAOutAmount for 1e6 LP base units.
-3. scalar = 1_990_000n / 1_000_000n = 1n - the LP is priced at $1.00 instead of $1.99;
-   if one LP is worth < $1, scalar = 0n and the entire position prices to zero.
-4. The mispriced total is returned with HTTP 200, so consumers persist a silently wrong
-   collateral valuation.
+1. POST /v1/decompile_mints with rawBalances containing the Meteora LP mint.
+2. getWithdrawQuote(1_000_000n, ...) returns tokenAOutAmount ≈ 1_080_000;
+   scalar = 1080000n / 1000000n = 1n - the 8% premium is silently discarded.
+3. If the pool rate drops below 1.0, scalar = 0n; the position is credited nothing while
+   delete balances[metMint] removes it - no error, HTTP 200.
+4. Consumers persist a silently understated valuation. The legacy float path computes the
+   scalar correctly, so this is a regression introduced in the Bn port.
 
 **Fix:**
 \`\`\`diff
 - const scalar = BigInt(quote.tokenAOutAmount.toString()) / quoteInput;
 - const scaledOutAmount = switchBaseDecimalsBn(balance * scalar, poolDecimals, outMintDecimals);
-+ const scaledOutAmount = switchBaseDecimalsBn(
-+     (balance * BigInt(quote.tokenAOutAmount.toString())) / quoteInput,
-+     poolDecimals,
-+     outMintDecimals
-+ );
++ const outAmount = BigInt(quote.tokenAOutAmount.toString());
++ const scaledOutAmount = switchBaseDecimalsBn((balance * outAmount) / quoteInput, poolDecimals, outMintDecimals);
 \`\`\`
 
 ...
 ```
 
-This is the bug Loopscale fixed upstream in PR #3 ("don't floor the meteora redemption rate"). The scanner rediscovered it cold at the pre-fix commit and produced the same fix that was adopted: multiply-first, divide-last.
+This is the bug Loopscale fixed upstream in commit 908b54ae (merged in PR #3, "don't floor the meteora redemption rate"). In the recall test at the pre-fix commit the scanner rediscovered it and produced the same fix that was adopted: multiply-first, divide-last. The taxonomy is seeded from this bug class (VS10), so this is a recall test, not a cold find - the cold test is the phoenix-v1 run in [validation/](validation/).
 
 ## How it stays token-efficient
 
 - **Bundle read**: All source is concatenated into one file - agents read it in parallel chunks on turn 1, no repeated file I/O.
-- **Fast triage**: 22 vectors are classified in a single pass using grep signatures verified against real Solana program source. Irrelevant vectors are dropped in 1 structured line each.
+- **Fast triage**: 24 vectors are classified in a single pass against signatures verified on real Solana program source (hit-count table in validation/signature-tests.md). Irrelevant vectors are dropped in 1 structured line each.
 - **FP gate**: Every potential finding must pass 3 checks (concrete path, reachable, impactful) before expansion. Kills false positives before they waste tokens.
 - **Hard stop**: Agents do not revisit eliminated vectors or re-scan.
 
-Typical scan of a ~5k line program uses ~60-100k tokens total across both agents.
+Token usage scales with codebase size: the whole source is read once per agent. A ~5k line program fits comfortably in a dual-agent scan; very large workspaces should be scanned per program directory.
 
 ## FP Gate
 
@@ -245,6 +246,10 @@ The skill file at `.claude/commands/scan-sol.md` is self-contained. You can:
 
 ## References
 
+### Provenance
+
+- Format and workflow modeled on [33Audits/cca-audit-agent](https://github.com/33Audits/cca-audit-agent) (EVM/Solidity, Uniswap CCA). sol-audit-agent is the Solana counterpart, built from scratch for the Solana account model.
+
 ### Solana program security
 
 - [Solana docs - Accounts](https://solana.com/docs/core/accounts)
@@ -256,8 +261,8 @@ The skill file at `.claude/commands/scan-sol.md` is self-contained. You can:
 
 - [Cashio $52M exploit (fake collateral accounts)](https://www.halborn.com/blog/post/explained-the-cashio-hack-march-2022) - VS2/VS3
 - [Wormhole $326M exploit (spoofed verification account)](https://www.halborn.com/blog/post/explained-the-wormhole-hack-february-2022) - VS21
-- [LoopscaleLabs/loopscale-pricing-adapters PR #3](https://github.com/LoopscaleLabs/loopscale-pricing-adapters/pull/3) - VS10
-- [Bonasa-Tech/manifest PR #738](https://github.com/Bonasa-Tech/manifest/pull/738) - VS16
+- [LoopscaleLabs/loopscale-pricing-adapters PR #3](https://github.com/LoopscaleLabs/loopscale-pricing-adapters/pull/3) (fix commit 908b54ae) - VS10
+- [Bonasa-Tech/manifest PR #738 discussion](https://github.com/Bonasa-Tech/manifest/pull/738) - VS16
 - [gmsol-labs/gmx-solana issues #416](https://github.com/gmsol-labs/gmx-solana/issues/416) and [#406](https://github.com/gmsol-labs/gmx-solana/issues/406), fix in [PR #447](https://github.com/gmsol-labs/gmx-solana/pull/447) - VS17
 - [hylo-so/sdk issues #135](https://github.com/hylo-so/sdk/issues/135) and [#136](https://github.com/hylo-so/sdk/issues/136) - VS14, VS13
 
