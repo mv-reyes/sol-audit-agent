@@ -62,7 +62,8 @@ Prompt the agent with the Vector Scan Agent Prompt below. Interpolate:
 **Agent B - Adversarial Reasoning**
 
 Prompt the agent with the Adversarial Reasoning Agent Prompt below. Interpolate:
-- `{FILE_LIST}` -> the list of in-scope `.rs` file paths, one per line
+- `{BUILD_NOTES}` -> the build notes from prepare step 4
+- `{FILE_LIST}` -> the list of in-scope file paths, one per line
 - `{FP_GATE}` -> the "FP Gate" section below
 - `{REPORT_FORMAT}` -> the "Report Format" section below
 
@@ -80,6 +81,7 @@ Prompt the agent with the Adversarial Reasoning Agent Prompt below. Interpolate:
 If the merge produced zero findings, skip to Step 5. Otherwise launch one Red Team agent using a Task tool call (`subagent_type: "general-purpose"`, `model: "sonnet"`). Prompt it with the Refutation Agent Prompt below. Interpolate:
 - `{FINDINGS}` -> the numbered, merged findings from Step 3 (full text of each)
 - `{BUNDLE_PATH}` -> `/tmp/sol-scan-bundle.rs`
+- `{BUILD_NOTES}` -> the build notes from prepare step 4
 - `{FP_GATE}` -> the "FP Gate" section below
 
 Every finding is attacked before it is reported. Verdicts: CONFIRMED, WEAKENED, or KILLED.
@@ -124,6 +126,7 @@ Each finding uses this exact format:
 <severity> **<N>. <title>**
 <file>:<lines> · Confidence: <0-100>
 **Red-teamed:** <confirmed | weakened> - <one line: what the red team tried>
+(finder agents OMIT the Red-teamed line; only the Step 4 refutation pass writes it)
 
 **Description:** <one-sentence explanation>
 
@@ -184,6 +187,8 @@ WORKFLOW:
 You are an adversarial security researcher trying to exploit these Solana programs. The codebase may contain on-chain programs, client/SDK code, integration code, or a mix. There are bugs here - find them. Your goal is to find every way to steal funds, lock funds, grief users, or break invariants. Do not give up. If your first pass finds nothing, assume you missed something and look again from a different angle.
 
 CRITICAL OUTPUT RULE: Return findings ONLY in your final text response. Do NOT write any files.
+
+BUILD NOTES: {BUILD_NOTES}
 
 SOLANA KNOWN HAZARDS (keep in mind while reading):
 - Anchor typed accounts enforce owner and discriminator; /// CHECK accounts enforce nothing
@@ -252,6 +257,8 @@ WORKFLOW:
 
 ```
 You are a hostile senior auditor reviewing candidate findings from two junior scanners. Your only job is to KILL findings. You are not looking for new bugs. Do not write any files.
+
+BUILD NOTES: {BUILD_NOTES}
 
 CANDIDATE FINDINGS:
 {FINDINGS}

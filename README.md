@@ -185,44 +185,49 @@ Claude Code gets the best results because it runs two agents with different anal
 
 ### Example output
 
-From validation run 1 ([Loopscale pricing adapters @ `96dcc95`](validation/loopscale-96dcc95.md), pre-fix commit; full run in [validation/](validation/)). Finding text verbatim from the adversarial agent; the merged report deduplicates it with the vector agent's identical find:
+From validation run 1 ([Loopscale pricing adapters @ `96dcc95`](validation/loopscale-96dcc95.md), pre-fix commit; full run in [validation/](validation/)):
 
 ```
 📋 Solana Scan Report
 Files scanned: 14
 Lines analyzed: 1,487
-Findings: 4 (1 High, 2 Medium, 1 Low)
+Findings: 4 (1 High, 3 Medium)
+Red team: 4 confirmed, 0 weakened, 0 killed
 
-🟠 **1. Meteora v1 handler truncates LP redemption rate to a whole number via BigInt scalar division**
-src/pricing/meteora.ts:73-83 · Confidence: 90
+🟠 **1. Meteora Bn redemption rate computed divide-before-multiply - LP collateral silently zeroed or halved**
+src/pricing/meteora.ts:79-80 · Confidence: 95
+**Red-teamed:** confirmed - tried to kill via "rate always >= 1 so flooring is harmless":
+the integer division truncates any non-integer rate, yields 0n under par, and no guard or
+error path fires (the result is silently wrong, not an exception).
 
-**Description:** In getMeteoraTokenBalancesBn the per-unit withdraw quote is computed as
-BigInt(quote.tokenAOutAmount.toString()) / quoteInput - a BigInt integer division - so the
-LP-to-USDC rate is floored to an integer (e.g. 1.08 -> 1, 0.95 -> 0), silently mispricing
-or entirely zeroing out the LP collateral on the v1 endpoint while
-delete balances[metMint] still removes the original balance.
+**Description:** The v1 Meteora handler computes the LP->underlying exchange rate with
+integer division (tokenAOutAmount / 1_000_000n) before multiplying by the LP balance,
+so any pool quoting under par floors the rate to 0 and the collateral's full balance
+is converted to 0 USDC and deleted from the response.
 
 **Attack path:**
-1. POST /v1/decompile_mints with rawBalances containing the Meteora LP mint.
-2. getWithdrawQuote(1_000_000n, ...) returns tokenAOutAmount ≈ 1_080_000;
-   scalar = 1080000n / 1000000n = 1n - the 8% premium is silently discarded.
-3. If the pool rate drops below 1.0, scalar = 0n; the position is credited nothing while
-   delete balances[metMint] removes it - no error, HTTP 200.
-4. Consumers persist a silently understated valuation. The legacy float path computes the
-   scalar correctly, so this is a regression introduced in the Bn port.
+1. POST /v1/decompile_mints with the Meteora LP mint in rawBalances.
+2. getWithdrawQuote(1_000_000n, ...) returns tokenAOutAmount; if it is below 1_000_000
+   (LP under par), scalar = 0n.
+3. balance * 0n = 0n is added to the USDC total and the LP mint is deleted - the
+   collateral's entire value disappears with no error.
+4. For quotes in [1,2) per unit, scalar = 1n, undervaluing the collateral by up to ~50%;
+   the mispriced snapshot propagates to consumers.
 
 **Fix:**
 \`\`\`diff
 - const scalar = BigInt(quote.tokenAOutAmount.toString()) / quoteInput;
 - const scaledOutAmount = switchBaseDecimalsBn(balance * scalar, poolDecimals, outMintDecimals);
-+ const outAmount = BigInt(quote.tokenAOutAmount.toString());
-+ const scaledOutAmount = switchBaseDecimalsBn((balance * outAmount) / quoteInput, poolDecimals, outMintDecimals);
++ const tokenAOut = BigInt(quote.tokenAOutAmount.toString());
++ const scaledOutAmount = switchBaseDecimalsBn((balance * tokenAOut) / quoteInput, poolDecimals, outMintDecimals);
 \`\`\`
 
 ...
+
+Appendix - Rejected by red team: (empty - all 4 candidates confirmed)
 ```
 
-This is the bug Loopscale fixed upstream in commit 908b54ae (merged in PR #3, "don't floor the meteora redemption rate"). In the recall test at the pre-fix commit the scanner rediscovered it and produced the same fix that was adopted: multiply-first, divide-last. The taxonomy is seeded from this bug class (VS10), so this is a recall test, not a cold find - the cold test is the phoenix-v1 run in [validation/](validation/).
+This is the bug Loopscale fixed upstream in commit 908b54ae (merged in PR #3, "don't floor the meteora redemption rate"). In the recall test at the pre-fix commit the scanner rediscovered it, produced the same fix that was adopted (multiply-first, divide-last), and the red team confirmed it. The taxonomy is seeded from this bug class (VS10), so this is a recall test, not a cold find - the cold test is the phoenix-v1 run in [validation/](validation/), where the red team killed three phantom Critical/High candidates built on a silent-wrapping premise.
 
 ## How it stays token-efficient
 
